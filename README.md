@@ -1,4 +1,12 @@
-# Perfetto Desktop
+<p align="center">
+  <img src="desktop/branding/github-repo-logo.png" alt="Perfetto Desktop logo" width="128">
+</p>
+
+<h1 align="center">Perfetto Desktop</h1>
+
+<p align="center">
+  Unofficial desktop wrapper for Perfetto.
+</p>
 
 A [Tooluse Labs](https://github.com/tooluse-labs) Tauri desktop wrapper
 for [Perfetto](https://github.com/google/perfetto), with a planned
@@ -27,10 +35,20 @@ applied at setup time.
 ```sh
 git clone https://github.com/tooluse-labs/perfetto-desktop
 cd perfetto-desktop
-./scripts/setup.sh                              # fetch and pin upstream Perfetto
-(cd third_party/perfetto && ./ui/build)         # build Perfetto UI
+./scripts/bootstrap.sh                          # host toolchain (pnpm + rustup), one-time per machine
+./scripts/setup.sh                              # fetch and pin upstream Perfetto + UI build deps
 (cd desktop && pnpm install && pnpm tauri dev)  # run the Tauri shell
 ```
+
+`pnpm tauri dev` invokes the Perfetto UI dev server directly via
+`tauri.conf.json:beforeDevCommand`. It calls `ui/build.js` rather
+than `ui/run-dev-server` because the wrapper hardcodes
+`--only-wasm-memory64` and macOS WKWebView cannot load Memory64
+WASM. See `docs/design-docs/perfetto-desktop-architecture.md` §6.1.
+
+`scripts/bootstrap.sh` currently supports macOS only (per Phase 1's
+single-platform target); Linux and Windows bootstrap is a Phase 2
+deliverable.
 
 ## Design
 

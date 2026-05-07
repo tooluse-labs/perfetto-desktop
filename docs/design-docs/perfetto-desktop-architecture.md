@@ -430,11 +430,22 @@ patch gates `window.__PERFETTO_FORK__?.desktop` in front of the
 `serviceWorkerController.install()` call. The Tauri
 `initialization_script` injects the flag.
 
-WASM needs separate verification. macOS WKWebView's MIME and streaming
-behaviour over custom protocols can affect
-`WebAssembly.instantiateStreaming`. If it fails, fall back to
-`arrayBuffer` instantiation and ensure the asset protocol returns
-`application/wasm`.
+WASM needs separate verification on macOS WKWebView for two reasons:
+
+1. **MIME and streaming**. WKWebView's MIME and streaming behaviour
+   over custom protocols can affect
+   `WebAssembly.instantiateStreaming`. If it fails, fall back to
+   `arrayBuffer` instantiation and ensure the asset protocol returns
+   `application/wasm`.
+2. **Memory64**. As of 2026, WKWebView does not implement the WASM
+   Memory64 proposal. Perfetto's `ui/run-dev-server` hardcodes
+   `--only-wasm-memory64`, which produces only the 64-bit
+   `trace_processor.wasm` and breaks the desktop app at load time
+   ("Unable to load the 32-bit trace_processor.wasm. ... browser does
+   NOT support Memory64"). The fork's `tauri.conf.json:beforeDevCommand`
+   invokes `ui/build.js` directly without that flag, so build.js
+   produces both the 32-bit and 64-bit variants and WKWebView auto-
+   selects the 32-bit one. See §15 for the exact command.
 
 ### 6.2 Opening Trace Files
 
@@ -502,18 +513,24 @@ Error handling:
 
 ### 7.1 Development Commands
 
-Bootstrap (run once after clone, or after a DEPS bump):
+Bootstrap:
 
 ```sh
-./scripts/setup.sh
+./scripts/bootstrap.sh   # host toolchain (one-time per machine: pnpm + rustup)
+./scripts/setup.sh       # repo state (after clone or DEPS bump): Perfetto checkout + UI build deps
+(cd desktop && pnpm install)
 ```
 
-Inner loop (two terminals):
+Inner loop:
 
 ```sh
-(cd third_party/perfetto && ./ui/run-dev-server --serve-port 10000)
 (cd desktop && pnpm tauri dev)
 ```
+
+`pnpm tauri dev` runs the dev server defined by
+`tauri.conf.json:beforeDevCommand` (calling `ui/build.js` directly
+rather than `ui/run-dev-server`; see §6.1 and §15) and launches the
+Tauri shell against `devUrl`.
 
 Checks:
 
@@ -832,9 +849,9 @@ front-end asset. Configuration sketch:
 {
   "build": {
     "beforeBuildCommand": "cd ../third_party/perfetto && ./ui/build",
-    "beforeDevCommand": "cd ../third_party/perfetto && ./ui/run-dev-server --serve-port 10000",
+    "beforeDevCommand": "cd ../third_party/perfetto && ./ui/node ./ui/build.js --serve --serve-port 10000 --watch",
     "devUrl": "http://localhost:10000",
-    "frontendDist": "../third_party/perfetto/ui/out/dist"
+    "frontendDist": "../../third_party/perfetto/ui/out/dist"
   },
   "productName": "Perfetto Desktop",
   "version": "0.1.0",
@@ -853,6 +870,15 @@ front-end asset. Configuration sketch:
   }
 }
 ```
+
+The `beforeDevCommand` invokes `ui/build.js` directly rather than
+`ui/run-dev-server` because the wrapper script hardcodes
+`--only-wasm-memory64` and macOS WKWebView cannot load Memory64
+WASM. See §6.1. `beforeBuildCommand` keeps `./ui/build` because that
+script does not pass the flag.
+
+`frontendDist` is resolved relative to `tauri.conf.json` (i.e., from
+`desktop/src-tauri/`), which is why it carries two leading `../`.
 
 The CSP example above corresponds to the "simplify Perfetto runtime
 CSP" option, implemented as

@@ -1,0 +1,35 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Perfetto Desktop",
+  "version": "0.1.0",
+  "identifier": "com.tooluselabs.perfetto.desktop",
+  "build": {
+    "beforeDevCommand": "cd ../third_party/perfetto && ./ui/node ./ui/build.js --serve --serve-port 10000 --watch",
+    "beforeBuildCommand": "cd ../third_party/perfetto && ./ui/build",
+    "devUrl": "http://localhost:10000",
+    "frontendDist": "../../third_party/perfetto/ui/out/dist"
+  },
+  "app": {
+    "windows": [
+      {
+        "label": "main",
+        "title": "Perfetto Desktop",
+        "width": 1440,
+        "height": 960
+      }
+    ]
+  },
+  "bundle": {
+    "active": true,
+    "targets": ["app", "dmg"],
+    "icon": [
+      "icons/32x32.png",
+      "icons/64x64.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico",
+      "icons/icon.png"
+    ]
+  }
+}

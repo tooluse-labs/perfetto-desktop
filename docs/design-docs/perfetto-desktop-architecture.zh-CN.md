@@ -372,9 +372,18 @@ window.__PERFETTO_FORK__ = Object.freeze({
 `window.__PERFETTO_FORK__?.desktop`。Tauri `initialization_script` 在 UI JS
 执行前注入该标记。
 
-WASM 需要单独验证：macOS WKWebView 对自定义协议的 MIME 和 streaming 行为
-可能影响 `WebAssembly.instantiateStreaming`。若失败，应 fallback 到
-`arrayBuffer` 实例化，并确保 asset 协议返回 `application/wasm`。
+macOS WKWebView 下 WASM 需要从两个角度单独验证：
+
+1. **MIME 与 streaming**。WKWebView 对自定义协议的 MIME 和 streaming
+   行为可能影响 `WebAssembly.instantiateStreaming`。若失败，应 fallback
+   到 `arrayBuffer` 实例化，并确保 asset 协议返回 `application/wasm`。
+2. **Memory64**。截至 2026 年，WKWebView 未实现 WASM Memory64 提案。
+   Perfetto 上游 `ui/run-dev-server` 硬编码 `--only-wasm-memory64`，
+   只产出 64-bit 的 `trace_processor.wasm`，在桌面端加载时直接报
+   "Unable to load the 32-bit trace_processor.wasm ... browser does
+   NOT support Memory64"。Fork 的 `tauri.conf.json:beforeDevCommand`
+   绕开 wrapper，直接调 `ui/build.js` 不带该 flag，build.js 同时产出
+   32-bit 与 64-bit 两个版本，WKWebView 自动选 32-bit。具体命令见 §15。
 
 ### 6.2 打开 Trace 文件
 
@@ -432,18 +441,23 @@ User message
 
 ### 7.1 开发命令
 
-Bootstrap（clone 后或每次 DEPS bump 后跑一次）：
+Bootstrap：
 
 ```sh
-./scripts/setup.sh
+./scripts/bootstrap.sh   # 宿主工具链（每台机器一次性：pnpm + rustup）
+./scripts/setup.sh       # 仓库状态（clone 后或 DEPS bump 后）：Perfetto checkout + UI build deps
+(cd desktop && pnpm install)
 ```
 
-开发循环（两个终端）：
+开发循环：
 
 ```sh
-(cd third_party/perfetto && ./ui/run-dev-server --serve-port 10000)
 (cd desktop && pnpm tauri dev)
 ```
+
+`pnpm tauri dev` 会按 `tauri.conf.json:beforeDevCommand` 启动 dev
+server（直接调 `ui/build.js` 而不是 `ui/run-dev-server`，原因见
+§6.1 和 §15），并把 Tauri 壳指向 `devUrl`。
 
 检查：
 
@@ -739,9 +753,9 @@ Tauri 项目使用 Perfetto UI 构建产物作为前端资源。配置示意：
 {
   "build": {
     "beforeBuildCommand": "cd ../third_party/perfetto && ./ui/build",
-    "beforeDevCommand": "cd ../third_party/perfetto && ./ui/run-dev-server --serve-port 10000",
+    "beforeDevCommand": "cd ../third_party/perfetto && ./ui/node ./ui/build.js --serve --serve-port 10000 --watch",
     "devUrl": "http://localhost:10000",
-    "frontendDist": "../third_party/perfetto/ui/out/dist"
+    "frontendDist": "../../third_party/perfetto/ui/out/dist"
   },
   "productName": "Perfetto Desktop",
   "version": "0.1.0",
@@ -761,7 +775,15 @@ Tauri 项目使用 Perfetto UI 构建产物作为前端资源。配置示意：
 }
 ```
 
-上述 CSP 示例对应「简化 Perfetto 运行时 CSP」选项，由
+`beforeDevCommand` 直接调用 `ui/build.js` 而非 `ui/run-dev-server`，
+原因是 wrapper 脚本硬编码 `--only-wasm-memory64`，而 macOS WKWebView
+不支持 Memory64 WASM，见 §6.1。`beforeBuildCommand` 仍用 `./ui/build`，
+因为该脚本不带这个 flag。
+
+`frontendDist` 相对 `tauri.conf.json` 解析（从 `desktop/src-tauri/`
+出发），所以前缀是两个 `../`。
+
+上述 CSP 示例对应「简化 Perfetto 运行时 CSP」选项,由
 `patches/perfetto/0003-strip-analytics-from-csp.patch` 在 setup 时作用于
 `third_party/perfetto/ui/src/frontend/index.ts`。
 
