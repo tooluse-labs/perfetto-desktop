@@ -1,0 +1,72 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  lint-scripts:
+    name: Lint shell scripts
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: shellcheck
+        run: shellcheck scripts/*.sh
+
+  guard-regressions:
+    name: Phase 1 regression guards
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Memory64 workaround must not regress
+        run: |
+          conf=desktop/src-tauri/tauri.conf.json
+          if grep -q -- '--only-wasm-memory64' "$conf"; then
+            echo "::error file=$conf::tauri.conf.json reintroduced --only-wasm-memory64. macOS WKWebView cannot load Memory64 WASM. See docs/design-docs/perfetto-desktop-architecture.md section 6.1."
+            exit 1
+          fi
+          if grep -q 'run-dev-server' "$conf"; then
+            echo "::error file=$conf::tauri.conf.json invokes ui/run-dev-server, which hardcodes --only-wasm-memory64. Use ui/build.js directly. See section 6.1."
+            exit 1
+          fi
+
+  desktop-shell:
+    name: Desktop shell static check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Tauri 2 Linux prerequisites
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libwebkit2gtk-4.1-dev \
+            libssl-dev \
+            librsvg2-dev \
+            libayatana-appindicator3-dev \
+            libxdo-dev
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: desktop/src-tauri
+
+      - name: cargo check
+        working-directory: desktop/src-tauri
+        run: cargo check --locked
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+          cache-dependency-path: desktop/pnpm-lock.yaml
+
+      - name: pnpm install --frozen-lockfile
+        working-directory: desktop
+        run: pnpm install --frozen-lockfile
