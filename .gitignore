@@ -1,0 +1,13 @@
+# Vendored upstream Perfetto checkout, populated by scripts/setup.sh.
+/third_party/perfetto/
+
+# Build outputs
+/desktop/dist/
+/desktop/src-tauri/target/
+/desktop/node_modules/
+
+# Editor / OS
+.DS_Store
+*.swp
+.idea/
+.vscode/
