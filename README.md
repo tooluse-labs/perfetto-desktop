@@ -1,16 +1,26 @@
-<p align="center">
-  <img src="desktop/branding/github-repo-logo.png" alt="Perfetto Desktop logo" width="128">
+<table>
+  <tr>
+    <td width="120">
+      <img src="desktop/branding/github-repo-logo.png" alt="Perfetto Desktop logo" width="96">
+    </td>
+    <td>
+      <h1>Perfetto Desktop</h1>
+      <p>Unofficial desktop wrapper for <a href="https://github.com/google/perfetto">Perfetto</a>.</p>
+    </td>
+  </tr>
+</table>
+
+<p>
+  <a href="https://github.com/tooluse-labs/perfetto-desktop/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/tooluse-labs/perfetto-desktop/actions/workflows/ci.yml/badge.svg"></a>
+  <a href="#license"><img alt="License" src="https://img.shields.io/badge/license-Apache--2.0-blue.svg"></a>
+  <a href="docs/design-docs/perfetto-desktop-architecture.md"><img alt="Status" src="https://img.shields.io/badge/status-Phase%201%20MVP-orange.svg"></a>
 </p>
 
-<h1 align="center">Perfetto Desktop</h1>
+---
 
-<p align="center">
-  Unofficial desktop wrapper for Perfetto.
-</p>
-
-A [Tooluse Labs](https://github.com/tooluse-labs) Tauri desktop wrapper
-for [Perfetto](https://github.com/google/perfetto), with a planned
-multi-LLM AI analysis plugin.
+A Tauri 2 desktop wrapper built by [Tooluse Labs](https://github.com/tooluse-labs),
+with a planned multi-LLM AI analysis plugin landing under
+`ui-overlay/plugins/` in Phase 2.
 
 This repository is product-only. Upstream Perfetto source is treated as
 a build dependency: pinned by SHA in [`DEPS`](DEPS) and fetched into
