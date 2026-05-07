@@ -1,14 +1,7 @@
-<table>
-  <tr>
-    <td width="120">
-      <img src="desktop/branding/github-repo-logo.png" alt="Perfetto Desktop logo" width="96">
-    </td>
-    <td>
-      <h1>Perfetto Desktop</h1>
-      <p>Unofficial desktop wrapper for <a href="https://github.com/google/perfetto">Perfetto</a>.</p>
-    </td>
-  </tr>
-</table>
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="desktop/branding/lockup-dark.svg">
+  <img src="desktop/branding/lockup-light.svg" alt="Perfetto Desktop — Unofficial desktop wrapper for Perfetto." width="600">
+</picture>
 
 <p>
   <a href="https://github.com/tooluse-labs/perfetto-desktop/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/tooluse-labs/perfetto-desktop/actions/workflows/ci.yml/badge.svg"></a>

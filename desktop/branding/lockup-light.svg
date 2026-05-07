@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 600 140" width="600" height="140" role="img" aria-label="Perfetto Desktop — Unofficial desktop wrapper for Perfetto.">
+  <image href="github-repo-logo.png" x="10" y="15" width="110" height="110" preserveAspectRatio="xMidYMid meet"/>
+  <text x="146" y="68" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif" font-weight="700" font-size="40" fill="#0F172A">Perfetto Desktop</text>
+  <text x="146" y="100" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif" font-weight="400" font-size="18" fill="#475569">Unofficial desktop wrapper for Perfetto.</text>
+</svg>
