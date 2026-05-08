@@ -11,13 +11,6 @@ import {PerfettoPlugin} from '../../public/plugin';
 import {Trace} from '../../public/trace';
 import {ChatPage} from './chat_page';
 
-// Phase 2 first cut: this plugin only verifies that the ui-overlay
-// pipeline (rsync into Perfetto's plugin tree, gen_ui_imports
-// auto-registration, sidebar registration on trace load) works
-// end-to-end. The actual Provider implementation (DeepSeek, ZAI,
-// Anthropic, ...) and tool-call loop land in subsequent cuts. See
-// docs/design-docs/perfetto-desktop-architecture.md sections 6.3,
-// 10 (Phase 2), 14.
 export default class PerfettoDesktopPlugin implements PerfettoPlugin {
   static readonly id = 'com.tooluselabs.PerfettoDesktop';
   static readonly description = `
@@ -36,10 +29,11 @@ export default class PerfettoDesktopPlugin implements PerfettoPlugin {
       section: 'current_trace',
       text: 'Multi-LLM Chat',
       href: '#!/multillmchat',
-      // Distinct from upstream PerfettoMcp's 'smart_toy' so the two
-      // entries are visually disambiguated in the sidebar.
+      // Distinct from upstream com.google.PerfettoMcp's 'smart_toy' so
+      // both entries are visually disambiguated when both plugins are
+      // enabled.
       icon: 'forum',
-      // Upstream PerfettoMcp uses sortOrder: 10; we sit just below.
+      // Anchored on upstream PerfettoMcp's sortOrder=10; we sit just below.
       sortOrder: 11,
     });
   }

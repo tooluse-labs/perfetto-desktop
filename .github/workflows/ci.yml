@@ -31,29 +31,25 @@ jobs:
             exit 1
           fi
 
-      - name: PerfettoMcp default-enable patch must exist
+      - name: Default-enable patches must exist
         run: |
-          patch=patches/perfetto/0002-default-enable-perfetto-mcp.patch
-          if [[ ! -f "$patch" ]]; then
-            echo "::error file=$patch::patch file missing. Phase 1 needs com.google.PerfettoMcp default-enabled so first-run users see AI Chat without manually toggling Plugins. See section 14."
-            exit 1
-          fi
-          if ! grep -q "^+  'com.google.PerfettoMcp'," "$patch"; then
-            echo "::error file=$patch::patch must add 'com.google.PerfettoMcp' to defaultPlugins"
-            exit 1
-          fi
-
-      - name: Fork plugin default-enable patch must exist
-        run: |
-          patch=patches/perfetto/0004-default-enable-fork-plugin.patch
-          if [[ ! -f "$patch" ]]; then
-            echo "::error file=$patch::patch file missing. Phase 2 needs com.tooluselabs.PerfettoDesktop default-enabled so first-run users see the fork plugin's Multi-LLM Chat without toggling Plugins. See section 14."
-            exit 1
-          fi
-          if ! grep -q "^+  'com.tooluselabs.PerfettoDesktop'," "$patch"; then
-            echo "::error file=$patch::patch must add 'com.tooluselabs.PerfettoDesktop' to defaultPlugins"
-            exit 1
-          fi
+          # (patch_file, plugin_id) pairs that seed defaultPlugins so
+          # first-run users see the corresponding sidebar menu without
+          # toggling Plugins manually. See arch doc section 14.
+          for entry in \
+              "0002-default-enable-perfetto-mcp.patch:com.google.PerfettoMcp" \
+              "0004-default-enable-fork-plugin.patch:com.tooluselabs.PerfettoDesktop"; do
+            patch="patches/perfetto/${entry%%:*}"
+            id="${entry##*:}"
+            if [[ ! -f "$patch" ]]; then
+              echo "::error file=$patch::patch file missing"
+              exit 1
+            fi
+            if ! grep -q "^+  '$id'," "$patch"; then
+              echo "::error file=$patch::patch must add '$id' to defaultPlugins"
+              exit 1
+            fi
+          done
 
       - name: apply-patches.sh idempotency must not regress
         run: |
@@ -112,14 +108,12 @@ jobs:
       - name: Assert patches landed in Perfetto worktree
         run: |
           file=third_party/perfetto/ui/src/core/embedder/default_plugins.ts
-          if ! grep -q "'com.google.PerfettoMcp'" "$file"; then
-            echo "::error file=$file::0002 did not result in 'com.google.PerfettoMcp' appearing in defaultPlugins."
-            exit 1
-          fi
-          if ! grep -q "'com.tooluselabs.PerfettoDesktop'" "$file"; then
-            echo "::error file=$file::0004 did not result in 'com.tooluselabs.PerfettoDesktop' appearing in defaultPlugins."
-            exit 1
-          fi
+          for id in "com.google.PerfettoMcp" "com.tooluselabs.PerfettoDesktop"; do
+            if ! grep -q "'$id'" "$file"; then
+              echo "::error file=$file::patch did not land '$id' into defaultPlugins"
+              exit 1
+            fi
+          done
 
       - name: Apply patches (second run, must be a no-op)
         run: |

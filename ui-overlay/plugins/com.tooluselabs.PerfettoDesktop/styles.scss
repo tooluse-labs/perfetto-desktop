@@ -1,0 +1,32 @@
+// Copyright (C) 2026 Tooluse Labs
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//      http://www.apache.org/licenses/LICENSE-2.0
+
+.pf-multi-llm-chat-placeholder {
+  padding: 24px;
+  color: var(--pf-color-text);
+
+  h2 {
+    margin-top: 0;
+  }
+
+  p {
+    color: var(--pf-color-text-muted);
+    line-height: 1.5;
+  }
+
+  code {
+    background-color: var(--pf-color-background-secondary);
+    padding: 0 4px;
+    border-radius: 3px;
+    color: var(--pf-color-text);
+  }
+
+  strong {
+    color: var(--pf-color-text);
+  }
+}
