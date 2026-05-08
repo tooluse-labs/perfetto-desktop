@@ -14,16 +14,15 @@ import {ChatPage} from './chat_page';
 export default class PerfettoDesktopPlugin implements PerfettoPlugin {
   static readonly id = 'com.tooluselabs.PerfettoDesktop';
   static readonly description = `
-    Tooluse Labs Multi-LLM Chat for Perfetto Desktop. Coexists with
-    upstream com.google.PerfettoMcp (Gemini); this plugin will host
-    OpenAI-compatible providers (DeepSeek, ZAI, Kimi, MiniMax, Qwen,
-    Doubao, OpenAI, Ollama, ...) and Anthropic in later cuts.
+    Tooluse Labs Multi-LLM Chat for Perfetto Desktop. Coexists with upstream
+    com.google.PerfettoMcp (Gemini) and adds OpenAI-compatible providers such
+    as DeepSeek and ZAI.
   `;
 
   async onTraceLoad(trace: Trace): Promise<void> {
     trace.pages.registerPage({
       route: '/multillmchat',
-      render: () => m(ChatPage),
+      render: () => m(ChatPage, {trace}),
     });
     trace.sidebar.addMenuItem({
       section: 'current_trace',
