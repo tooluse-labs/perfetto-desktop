@@ -767,8 +767,9 @@ patch**。
 | Patch | 用途 | 是否必需？ |
 | --- | --- | --- |
 | `0001-bypass-sw-when-fork-flag.patch` | 在 `serviceWorkerController.install()` 前 gate `window.__PERFETTO_FORK__?.desktop` | 取决实测:仅当 Tauri WebView 拒绝 Perfetto SW 时需要(阶段 1 验证:WKWebView 已经走 user-disabled 分支跳过 SW 注册,该 patch 至今没有触发) |
-| `0002-default-enable-perfetto-mcp.patch` | 把 `'com.google.PerfettoMcp'` 追加进上游 `ui/src/core/embedder/default_plugins.ts` 的 `defaultPlugins` 白名单 | **2026-05-08 落地。** 首次用户加载 trace 后 sidebar 直接出现 AI Chat 菜单,无需先去 Plugins 设置页手动 toggle。该数组仅决定 feature flag 默认值,用户后续手动 toggle 仍然生效。 |
+| `0002-default-enable-perfetto-mcp.patch` | 把 `'com.google.PerfettoMcp'` 追加进上游 `ui/src/core/embedder/default_plugins.ts` 的 `defaultPlugins` 白名单 | **2026-05-08 落地。** 首次用户加载 trace 后 sidebar 直接出现上游 AI Chat(Gemini)菜单,无需先去 Plugins 设置页手动 toggle。该数组仅决定 feature flag 默认值,用户后续手动 toggle 仍然生效。 |
 | `0003-strip-analytics-from-csp.patch` | 桌面模式下从运行时 meta CSP 剥离 GA/GTM 源 | 可选;取决于 §15 选定的 CSP 策略 |
+| `0004-default-enable-fork-plugin.patch` | 把 `'com.tooluselabs.PerfettoDesktop'` 追加进同一个 `defaultPlugins` 白名单 | **2026-05-08 落地。** 跟 0002 同一动机,只是对象是 fork 自有 plugin —— 首次用户加载 trace 后 sidebar 直接出现 `Multi-LLM Chat` 菜单。hunk 位置基于 0002 已插入的行,所以 0004 必须在 0002 **之后** apply;`apply-patches.sh` 按文件名字典序遍历,自然就给出正确顺序。 |
 
 slot `0002-default-enable-perfetto-mcp.patch` 之前曾承载另一个用途
 (在 fork 插件自带 Gemini 路径时把 `com.google.PerfettoMcp` 从插件注册

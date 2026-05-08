@@ -872,8 +872,9 @@ or `git diff` against the pinned SHA. Expected patch slots:
 | Patch | Purpose | Required? |
 | --- | --- | --- |
 | `0001-bypass-sw-when-fork-flag.patch` | Gate `serviceWorkerController.install()` on `window.__PERFETTO_FORK__?.desktop` | Conditional: only if Tauri's WebView rejects Perfetto's SW (Phase 1 verification: WKWebView already skips SW registration via the user-disabled path, so this patch has not been required) |
-| `0002-default-enable-perfetto-mcp.patch` | Append `'com.google.PerfettoMcp'` to upstream's `defaultPlugins` allowlist in `ui/src/core/embedder/default_plugins.ts` | **Landed 2026-05-08.** First-run users get the AI Chat menu directly after a trace loads, without manually toggling the plugin in `Plugins` settings. Honors any later user toggle (the array only seeds the feature flag default). |
+| `0002-default-enable-perfetto-mcp.patch` | Append `'com.google.PerfettoMcp'` to upstream's `defaultPlugins` allowlist in `ui/src/core/embedder/default_plugins.ts` | **Landed 2026-05-08.** First-run users get upstream's AI Chat (Gemini) directly after a trace loads, without manually toggling the plugin. Honors any later user toggle (the array only seeds the feature flag default). |
 | `0003-strip-analytics-from-csp.patch` | Conditionally remove Google Analytics/GTM sources from runtime meta CSP in desktop mode | Optional; depends on §15 CSP option chosen |
+| `0004-default-enable-fork-plugin.patch` | Append `'com.tooluselabs.PerfettoDesktop'` to the same `defaultPlugins` allowlist | **Landed 2026-05-08.** Mirrors 0002's UX rationale for the fork-owned plugin: first-run users see the `Multi-LLM Chat` menu directly. Hunk position is anchored on lines 0002 already inserted, so 0004 must apply *after* 0002; `apply-patches.sh` runs them in lexicographic order which gives the right ordering naturally. |
 
 Slot `0002-default-enable-perfetto-mcp.patch` previously documented a
 different intent (filter `com.google.PerfettoMcp` out of plugin

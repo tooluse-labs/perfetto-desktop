@@ -43,6 +43,18 @@ jobs:
             exit 1
           fi
 
+      - name: Fork plugin default-enable patch must exist
+        run: |
+          patch=patches/perfetto/0004-default-enable-fork-plugin.patch
+          if [[ ! -f "$patch" ]]; then
+            echo "::error file=$patch::patch file missing. Phase 2 needs com.tooluselabs.PerfettoDesktop default-enabled so first-run users see the fork plugin's Multi-LLM Chat without toggling Plugins. See section 14."
+            exit 1
+          fi
+          if ! grep -q "^+  'com.tooluselabs.PerfettoDesktop'," "$patch"; then
+            echo "::error file=$patch::patch must add 'com.tooluselabs.PerfettoDesktop' to defaultPlugins"
+            exit 1
+          fi
+
       - name: apply-patches.sh idempotency must not regress
         run: |
           f=scripts/apply-patches.sh
@@ -101,7 +113,11 @@ jobs:
         run: |
           file=third_party/perfetto/ui/src/core/embedder/default_plugins.ts
           if ! grep -q "'com.google.PerfettoMcp'" "$file"; then
-            echo "::error file=$file::patch did not result in 'com.google.PerfettoMcp' appearing in defaultPlugins."
+            echo "::error file=$file::0002 did not result in 'com.google.PerfettoMcp' appearing in defaultPlugins."
+            exit 1
+          fi
+          if ! grep -q "'com.tooluselabs.PerfettoDesktop'" "$file"; then
+            echo "::error file=$file::0004 did not result in 'com.tooluselabs.PerfettoDesktop' appearing in defaultPlugins."
             exit 1
           fi
 
