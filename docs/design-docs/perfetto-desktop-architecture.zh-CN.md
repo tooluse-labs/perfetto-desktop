@@ -381,13 +381,23 @@ macOS WKWebView 下 WASM 需要从两个角度单独验证：
 1. **MIME 与 streaming**。WKWebView 对自定义协议的 MIME 和 streaming
    行为可能影响 `WebAssembly.instantiateStreaming`。若失败，应 fallback
    到 `arrayBuffer` 实例化，并确保 asset 协议返回 `application/wasm`。
-2. **Memory64**。截至 2026 年，WKWebView 未实现 WASM Memory64 提案。
-   Perfetto 上游 `ui/run-dev-server` 硬编码 `--only-wasm-memory64`，
-   只产出 64-bit 的 `trace_processor.wasm`，在桌面端加载时直接报
+2. **Memory64**。截至 2026 年,WKWebView 未实现 WASM Memory64 提案。
+   Perfetto 上游 `ui/run-dev-server` 硬编码 `--only-wasm-memory64`,
+   只产出 64-bit 的 `trace_processor.wasm`,在桌面端加载时直接报
    "Unable to load the 32-bit trace_processor.wasm ... browser does
    NOT support Memory64"。Fork 的 `tauri.conf.json:beforeDevCommand`
-   绕开 wrapper，直接调 `ui/build.js` 不带该 flag，build.js 同时产出
-   32-bit 与 64-bit 两个版本，WKWebView 自动选 32-bit。具体命令见 §15。
+   绕开 wrapper,直接调 `ui/build.js` 不带该 flag,build.js 同时产出
+   32-bit 与 64-bit 两个版本,WKWebView 自动选 32-bit。具体命令见 §15。
+
+3. **Live-reload 死循环**。上游 `ui/build.js` 在 `--watch` 模式下,
+   叠加 fork overlay 后会自我触发:rollup 或 tsc 周期性重新写
+   `ui/out/dist/<version>/` 下的文件,`fs.watch(ui/out/dist/)` 监听到
+   变化触发 `notifyLiveServer`,页面 reload,然后下一轮 ~8-9s 又来。
+   webview 处于持续刷新状态,无法用来测试。Phase 2 临时 workaround:
+   `tauri.conf.json:beforeDevCommand` **去掉 `--watch`** —— 代价是
+   源文件改动不再自动 rebuild,开发者需要手动 `(cd third_party/perfetto
+   && ./ui/build)` 之后用 `Cmd+R` 刷新 webview。根因修法(notifyLiveServer
+   按内容 hash 去抖,或截断 tsc/rollup 的虚假重发链)留作 Phase 2 follow-up。
 
 ### 6.2 打开 Trace 文件
 
@@ -798,7 +808,7 @@ Tauri 项目使用 Perfetto UI 构建产物作为前端资源。配置示意：
 {
   "build": {
     "beforeBuildCommand": "cd ../third_party/perfetto && ./ui/build",
-    "beforeDevCommand": "cd ../third_party/perfetto && ./ui/node ./ui/build.js --serve --serve-port 10000 --watch",
+    "beforeDevCommand": "cd ../third_party/perfetto && ./ui/node ./ui/build.js --serve --serve-port 10000",
     "devUrl": "http://localhost:10000",
     "frontendDist": "../../third_party/perfetto/ui/out/dist"
   },

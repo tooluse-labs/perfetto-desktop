@@ -4,7 +4,7 @@
   "version": "0.1.0",
   "identifier": "com.tooluselabs.perfetto.desktop",
   "build": {
-    "beforeDevCommand": "cd ../third_party/perfetto && ./ui/node ./ui/build.js --serve --serve-port 10000 --watch",
+    "beforeDevCommand": "cd ../third_party/perfetto && ./ui/node ./ui/build.js --serve --serve-port 10000",
     "beforeBuildCommand": "cd ../third_party/perfetto && ./ui/build",
     "devUrl": "http://localhost:10000",
     "frontendDist": "../../third_party/perfetto/ui/out/dist"

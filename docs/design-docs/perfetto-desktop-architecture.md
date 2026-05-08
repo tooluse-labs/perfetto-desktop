@@ -452,6 +452,19 @@ WASM needs separate verification on macOS WKWebView for two reasons:
    produces both the 32-bit and 64-bit variants and WKWebView auto-
    selects the 32-bit one. See §15 for the exact command.
 
+3. **Live-reload watch loop**. Upstream `ui/build.js` in `--watch`
+   mode self-triggers when fork-owned overlays are present: rollup or
+   tsc periodically re-emits files inside `ui/out/dist/<version>/`,
+   the `fs.watch` on `ui/out/dist/` fires the `notifyLiveServer` rule,
+   the page reloads, and the cycle repeats roughly every 8–9 s. The
+   page becomes unusable for testing. As a Phase 2 workaround,
+   `tauri.conf.json:beforeDevCommand` drops the `--watch` flag — the
+   trade-off is that source edits no longer trigger automatic
+   rebuild; the developer runs `(cd third_party/perfetto && ./ui/build)`
+   manually, then reloads the webview with `Cmd+R`. Root-cause fix
+   (debounce notifyLiveServer on actual content change, or break the
+   tsc/rollup spurious-reemit chain) is tracked as a Phase 2 follow-up.
+
 ### 6.2 Opening Trace Files
 
 MVP supports two entry points:
@@ -909,7 +922,7 @@ front-end asset. Configuration sketch:
 {
   "build": {
     "beforeBuildCommand": "cd ../third_party/perfetto && ./ui/build",
-    "beforeDevCommand": "cd ../third_party/perfetto && ./ui/node ./ui/build.js --serve --serve-port 10000 --watch",
+    "beforeDevCommand": "cd ../third_party/perfetto && ./ui/node ./ui/build.js --serve --serve-port 10000",
     "devUrl": "http://localhost:10000",
     "frontendDist": "../../third_party/perfetto/ui/out/dist"
   },
