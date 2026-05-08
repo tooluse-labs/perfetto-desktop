@@ -5,6 +5,7 @@
 /desktop/dist/
 /desktop/src-tauri/target/
 /desktop/node_modules/
+/tmp/
 
 # Editor / OS
 .DS_Store
