@@ -31,6 +31,102 @@ jobs:
             exit 1
           fi
 
+      - name: PerfettoMcp default-enable patch must exist
+        run: |
+          patch=patches/perfetto/0002-default-enable-perfetto-mcp.patch
+          if [[ ! -f "$patch" ]]; then
+            echo "::error file=$patch::patch file missing. Phase 1 needs com.google.PerfettoMcp default-enabled so first-run users see AI Chat without manually toggling Plugins. See section 14."
+            exit 1
+          fi
+          if ! grep -q "^+  'com.google.PerfettoMcp'," "$patch"; then
+            echo "::error file=$patch::patch must add 'com.google.PerfettoMcp' to defaultPlugins"
+            exit 1
+          fi
+
+      - name: apply-patches.sh idempotency must not regress
+        run: |
+          f=scripts/apply-patches.sh
+          if ! grep -q "apply --reverse --check" "$f"; then
+            echo "::error file=$f::idempotency check (git apply --reverse --check) was removed; re-running setup.sh on an already-patched checkout would error."
+            exit 1
+          fi
+
+      - name: Scripts must be cwd-anchored on BASH_SOURCE
+        run: |
+          for s in apply-patches setup sync-overlay bootstrap update-perfetto; do
+            f="scripts/$s.sh"
+            if ! grep -q "BASH_SOURCE" "$f"; then
+              echo "::error file=$f::expected BASH_SOURCE-anchored cwd. Reverting to git rev-parse --show-toplevel breaks invocation from inside third_party/perfetto/, which is itself a git repo and would resolve to the inner toplevel."
+              exit 1
+            fi
+          done
+
+  patch-integration:
+    name: Patch system integration
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Cache Perfetto checkout
+        uses: actions/cache@v4
+        with:
+          path: third_party/perfetto
+          key: perfetto-checkout-${{ hashFiles('DEPS') }}
+
+      - name: Pin Perfetto to DEPS SHA (no install-build-deps)
+        run: |
+          set -eu
+          # Reproduce setup.sh's clone+pin without the heavy
+          # tools/install-build-deps step — patches don't need it.
+          # shellcheck disable=SC1091
+          source DEPS
+          dir=third_party/perfetto
+          if [[ ! -d $dir/.git ]]; then
+            git clone "$PERFETTO_REPO" "$dir"
+          fi
+          (cd "$dir" && git fetch origin && \
+           git -c advice.detachedHead=false reset --hard "$PERFETTO_SHA")
+
+      - name: Apply patches (first run)
+        run: ./scripts/apply-patches.sh | tee /tmp/apply-first.log
+
+      - name: Assert patches landed in Perfetto worktree
+        run: |
+          file=third_party/perfetto/ui/src/core/embedder/default_plugins.ts
+          if ! grep -q "'com.google.PerfettoMcp'" "$file"; then
+            echo "::error file=$file::patch did not result in 'com.google.PerfettoMcp' appearing in defaultPlugins."
+            exit 1
+          fi
+
+      - name: Apply patches (second run, must be a no-op)
+        run: |
+          ./scripts/apply-patches.sh | tee /tmp/apply-second.log
+          if ! grep -q "Already applied, skipping" /tmp/apply-second.log; then
+            echo "::error::second invocation of apply-patches.sh did not skip the already-applied patch; idempotency broken."
+            exit 1
+          fi
+
+      - name: Worktree must be unchanged between runs
+        run: |
+          if ! git -C third_party/perfetto diff --quiet; then
+            git -C third_party/perfetto diff
+            echo "::error::worktree diff between first and second apply-patches.sh runs is non-empty; second run mutated state instead of skipping."
+            exit 1
+          fi
+
+      - name: Run apply-patches.sh from inside third_party/perfetto/
+        run: |
+          # cwd-anchoring regression: from inside the inner Perfetto repo,
+          # `git rev-parse --show-toplevel` resolves to the inner repo's
+          # toplevel, not ours. The BASH_SOURCE-based anchoring must keep
+          # the script working regardless of cwd.
+          (cd third_party/perfetto && ../../scripts/apply-patches.sh) \
+            | tee /tmp/apply-third.log
+          if ! grep -q "Already applied, skipping" /tmp/apply-third.log; then
+            echo "::error::apply-patches.sh failed to find patches when invoked from inside third_party/perfetto/. Cwd anchoring regressed."
+            exit 1
+          fi
+
   desktop-shell:
     name: Desktop shell static check
     runs-on: ubuntu-latest
