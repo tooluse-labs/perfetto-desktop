@@ -2,11 +2,7 @@ diff --git a/ui/src/core/embedder/default_plugins.ts b/ui/src/core/embedder/defa
 index 1ba9073306..a57bb51442 100644
 --- a/ui/src/core/embedder/default_plugins.ts
 +++ b/ui/src/core/embedder/default_plugins.ts
-@@ -44,6 +44,7 @@ export const defaultPlugins = [
-   'com.android.PinSysUITracks',
-   'com.android.SysUIWorkspace',
+@@ -46,2 +46,3 @@ export const defaultPlugins = [
    'com.android.WearLongBatteryTracing',
 +  'com.google.PerfettoMcp',
    'com.google.PixelCpmTrace',
-   'com.google.PixelMemory',
-   'dev.perfetto.AggregateProfiles',

@@ -1,10 +1,6 @@
---- a/ui/src/core/embedder/default_plugins.ts	2026-05-08 16:03:16
-+++ b/ui/src/core/embedder/default_plugins.ts	2026-05-08 16:03:16
-@@ -47,6 +47,7 @@
-   'com.google.PerfettoMcp',
-   'com.google.PixelCpmTrace',
+--- a/ui/src/core/embedder/default_plugins.ts
++++ b/ui/src/core/embedder/default_plugins.ts
+@@ -49,2 +49,3 @@
    'com.google.PixelMemory',
 +  'com.tooluselabs.PerfettoDesktop',
    'dev.perfetto.AggregateProfiles',
-   'dev.perfetto.AutoPinAndExpandTracks',
-   'dev.perfetto.BookmarkletApi',
