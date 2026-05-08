@@ -880,7 +880,11 @@ No upstream patch is needed for plugin registration.
 
 Patches against upstream Perfetto live as files under
 `patches/perfetto/`. Each patch is generated with `git format-patch`
-or `git diff` against the pinned SHA. Expected patch slots:
+or `git diff` against the pinned SHA. When two patches touch nearby
+lines in the same upstream file, generate them with one line of context
+(`git format-patch -U1` or `git diff -U1`) so one patch does not claim
+the other patch's insertion as context. This is the default convention
+for `defaultPlugins` edits. Expected patch slots:
 
 | Patch | Purpose | Required? |
 | --- | --- | --- |

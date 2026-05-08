@@ -772,7 +772,11 @@ Perfetto 的 `ui/build.js` 会扫描 `ui/src/plugins/*/index.ts` 并生成
 patch**。
 
 针对 upstream Perfetto 的修改以 `.patch` 文件形式落在 `patches/perfetto/`，
-由 `git format-patch` 或 `git diff` 针对锁定的 SHA 生成。预期 patch slot：
+由 `git format-patch` 或 `git diff` 针对锁定的 SHA 生成。如果两个 patch
+修改同一个 upstream 文件里的相邻行，生成时使用一行上下文（`git
+format-patch -U1` 或 `git diff -U1`），避免一个 patch 把另一个 patch 的
+插入内容纳入自己的上下文。`defaultPlugins` 这类编辑默认遵循该约定。预期
+patch slot：
 
 | Patch | 用途 | 是否必需？ |
 | --- | --- | --- |
