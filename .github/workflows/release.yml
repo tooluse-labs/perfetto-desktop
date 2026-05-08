@@ -10,6 +10,11 @@ jobs:
   build-macos-arm64:
     name: Build macOS arm64 DMG
     runs-on: macos-latest
+    permissions:
+      # Required for softprops/action-gh-release to create the release
+      # and attach the DMG. Default GITHUB_TOKEN scope is read-only on
+      # repos with "Restricted" workflow permissions.
+      contents: write
     steps:
       - uses: actions/checkout@v4
 
