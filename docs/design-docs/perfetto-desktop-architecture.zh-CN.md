@@ -349,21 +349,25 @@ declare global {
   interface Window {
     __PERFETTO_FORK__?: {
       readonly desktop: boolean;
-      readonly hideUpstreamMcp: boolean;
     };
   }
 }
 ```
 
-Web 构建下 `window.__PERFETTO_FORK__` 为 `undefined`，所有读取必须使用
-optional chaining。Tauri `initialization_script` 注入示例：
+Web 构建下 `window.__PERFETTO_FORK__` 为 `undefined`,所有读取必须使用
+optional chaining。Tauri `initialization_script` 注入示例:
 
 ```ts
 window.__PERFETTO_FORK__ = Object.freeze({
   desktop: true,
-  hideUpstreamMcp: true,
 });
 ```
+
+早先草案还带 `hideUpstreamMcp` 字段,配套 patch slot
+`0002-hide-upstream-mcp-when-fork-flag.patch`。阶段 1 验证（2026-05-08）
+已确认上游 `com.google.PerfettoMcp` 在 Tauri WKWebView 中可用,fork
+插件改为与之共存而非隐藏,所以该字段与 patch slot 一并移除（详见 §10
+和 §14）。
 
 实现以 patch 文件落在 `patches/perfetto/` 下，例如
 `0001-bypass-sw-when-fork-flag.patch`，作用于
@@ -509,9 +513,10 @@ MVP 以 macOS 作为首发验证平台，同时保持 Windows/Linux 目录和配
 
 - 可以通过 Tauri 启动桌面应用并加载 Perfetto UI。
 - 可以打开本地 trace，并完成基础浏览。
-- 加载 trace 后侧边栏出现 AI Chat 入口。
-- Gemini 和 OpenAI-compatible Provider 至少各完成一次工具调用。
-- API key 不持久化到 localStorage。
+- 加载 trace 后侧边栏出现上游 `com.google.PerfettoMcp` 提供的 AI Chat 入口。
+- 上游 Gemini Provider 完成一次工具调用(阶段 1 实测路径)。
+- 阶段 1 不要求 fork 自有 Provider;fork 插件的 AI Chat 与 Provider(DeepSeek/ZAI/Anthropic 等)在阶段 2 完成。
+- 阶段 2 起,fork 插件的 API key 不持久化到 localStorage。
 - 桌面模式绕过或正确处理 Service Worker 注册。
 - WASM、worker 和版本化资源目录在 Tauri 中可加载。
 - 单轮工具调用次数、SQL 结果大小和错误信息可控。
@@ -519,7 +524,7 @@ MVP 以 macOS 作为首发验证平台，同时保持 Windows/Linux 目录和配
 - 工具抛错时 tool-call loop 不死循环。
 - 用户点击 Stop 后能通过 `AbortSignal` 或等价机制中断在途 Provider 请求；
   若正在执行 tool，则在下一次 loop 边界停止。
-- `com.google.PerfettoMcp` 不在 fork 桌面版默认显示，避免两个 AI Chat 入口。
+- `com.google.PerfettoMcp`（上游 Gemini chat）与 fork 自有 plugin 的 chat 入口共存,菜单文案区分两个入口。
 - `(cd third_party/perfetto && ./ui/build --typecheck)` 与
   `(cd third_party/perfetto && ./ui/run-unittests)` 通过。
 - macOS Apple Silicon arm64 可生成可运行安装包或 `.app` 产物。
@@ -574,36 +579,65 @@ drift 在 setup 阶段暴露，不到 build 才发作。
 ### 阶段 1：MVP
 
 - 新增 `desktop/` Tauri 项目。
-- 完成 Perfetto UI 静态资源加载。
-- 新增 `com.tooluselabs.PerfettoDesktop` 插件入口。
-- 支持 Gemini 与 OpenAI-compatible。
-- 支持模型配置、API key、系统 prompt。
-- 支持基础 trace tools 与 SQL 查询工具。
-- 优先系统安全存储；实现受阻时允许会话内存兜底，绝不进入 localStorage。
-- 桌面构建默认禁用或隐藏 `com.google.PerfettoMcp`。
+- 完成 Perfetto UI 静态资源加载（含 WKWebView 32-bit WASM workaround,
+  解决 Memory64 不兼容,详见 §6.1）。
 - 桌面构建绕过或兼容 Service Worker。
+- 验证上游 `com.google.PerfettoMcp` 在 Tauri 壳里可用,与之共存,不再隐藏。
 
 验收标准：
 
 - 可以本地打开桌面应用。
-- 可以加载 trace 后进入 AI Chat。
-- Gemini 和一个 OpenAI-compatible Provider 可以完成一次工具调用。
+- WASM、worker、版本化资源目录在 Tauri 下加载成功。
 - `(cd third_party/perfetto && ./ui/build --typecheck)` 通过。
 - macOS 桌面产物可运行。
+- 上游 `com.google.PerfettoMcp` 插件在 trace 加载后激活,AI Chat 菜单出现,
+  Gemini API 完整 round-trip(CSP、fetch streaming、SDK 调用链路均已在
+  WKWebView 下验证,验证日期 2026-05-08）。
+
+阶段 1 重要发现：原本计划隐藏 `com.google.PerfettoMcp` 并由 fork 插件
+重做 Gemini 路径。该方案已废弃 —— 上游可用,fork 插件不再涉足 Gemini,
+转而专注上游不覆盖的 Provider（见阶段 2）。
 
 ### 阶段 2：产品化
 
-- 完善 API key 安全存储的跨平台兼容和异常恢复。
-- 支持 Anthropic 与 Ollama。
-- 增加工具调用结果截断、错误诊断和重试。
-- 增加 Provider adapter 单测。
-- 完成 macOS/Windows/Linux 安装包 smoke test。
+- 新增 fork 自有的 `com.tooluselabs.PerfettoDesktop` 插件,提供与上游平行
+  的 AI Chat 入口,覆盖上游 `com.google.PerfettoMcp` 不支持的 Provider。
+- Provider 优先级:
+  1. **DeepSeek 与 ZAI（智谱 GLM）为首要交付**,两家都通过同一个
+     OpenAI-compatible Provider + 可配置 base URL 提供。同一个 Provider
+     类零成本顺带覆盖一大票生态:Kimi（Moonshot）、MiniMax、通义千问
+     （阿里 DashScope）、豆包（火山方舟）、OpenAI 本身、本地 Ollama /
+     LM Studio / vLLM,以及 OpenRouter 这类聚合网关。Settings UI 提供
+     preset 列表（DeepSeek、ZAI、Kimi、MiniMax、Qwen、豆包、OpenAI、
+     Ollama、自定义）+ 一个 free-form base URL 输入。
+  2. **Anthropic（Claude）为延后任务**。Claude Messages API 协议自成体系
+     （endpoint 不同、header 鉴权、content-block 消息结构、tool-use schema
+     不同),需要单独的 Provider 类基于 `@anthropic-ai/sdk`。**不阻塞**阶段 2
+     验收;明确想用 Claude 的用户可以等、用聚合网关走 OpenAI-compat
+     Provider,或者直接在 Claude Code 里用 perfetto-mcp-rs。
+- Provider 抽象按 §6.3 实现手动 tool-call 循环（Gemini 的
+  `automaticFunctionCalling` 不可移植）。
+- Settings 页:Provider 选择、base URL、API key、模型、系统 prompt。
+- API key 优先系统安全存储,受阻时允许会话内存兜底,绝不进入 localStorage。
+- 工具调用结果截断、错误诊断、重试。
+- 跨平台 CI:Linux / Windows runner 出 installer。
+- Provider adapter 单测。
 
 验收标准：
 
-- 至少 4 类 Provider 可配置。
+- DeepSeek 与 ZAI Provider 各完成一次工具调用。
 - 工具调用失败时 UI 有明确错误。
-- 三个平台至少一个安装包可运行。
+- macOS 之外至少有一个平台产出可运行 installer。
+
+Anthropic Provider 为 stretch goal,等 OpenAI-compat 路径稳定后再 ship。
+
+如果用户**不需要 GUI**,只想让自己已经在用的 MCP client（Claude Code、
+Codex、Cursor、Claude Desktop）以 headless 方式分析 trace 文件,推荐使用
+[`tooluse-labs/perfetto-mcp-rs`](https://github.com/tooluse-labs/perfetto-mcp-rs)
+作为配套工具。它是独立的 Rust 二进制,封装 `trace_processor_shell` 并通过
+stdio MCP 暴露 PerfettoSQL 与若干专用 Chrome 工具。Perfetto Desktop 与
+perfetto-mcp-rs 是互补关系,不是竞争:Perfetto Desktop 提供 GUI 与 in-app
+chat,perfetto-mcp-rs 把 trace 工具接进用户已有的 agent 工作流。
 
 ### 阶段 3：长期维护
 
@@ -732,9 +766,13 @@ patch**。
 
 | Patch | 用途 | 是否必需？ |
 | --- | --- | --- |
-| `0001-bypass-sw-when-fork-flag.patch` | 在 `serviceWorkerController.install()` 前 gate `window.__PERFETTO_FORK__?.desktop` | 取决实测：仅当 Tauri WebView 拒绝 Perfetto SW 时需要 |
-| `0002-hide-upstream-mcp-when-fork-flag.patch` | 当 `hideUpstreamMcp` 设为 true 时，从插件注册中过滤掉 `com.google.PerfettoMcp` | Phase 2 可选；替代方案是同时存在两个 AI Chat 入口、用不同菜单文案区分 |
-| `0003-strip-analytics-from-csp.patch` | 桌面模式下从运行时 meta CSP 剥离 GA/GTM 源 | 可选；取决于 §15 选定的 CSP 策略 |
+| `0001-bypass-sw-when-fork-flag.patch` | 在 `serviceWorkerController.install()` 前 gate `window.__PERFETTO_FORK__?.desktop` | 取决实测:仅当 Tauri WebView 拒绝 Perfetto SW 时需要(阶段 1 验证:WKWebView 已经走 user-disabled 分支跳过 SW 注册,该 patch 至今没有触发) |
+| `0003-strip-analytics-from-csp.patch` | 桌面模式下从运行时 meta CSP 剥离 GA/GTM 源 | 可选;取决于 §15 选定的 CSP 策略 |
+
+之前曾保留 slot `0002-hide-upstream-mcp-when-fork-flag.patch`,用于在
+fork 插件自带 Gemini 路径时把 `com.google.PerfettoMcp` 从插件注册中过滤
+掉。该 slot 已**移除**:阶段 1 验证表明上游 MCP 在 Tauri WKWebView 下完全
+可用,fork 插件改为与之共存(详见 §10),没有必要再隐藏。
 
 Phase 1 预期 0 patch。每个 patch 只在它的触发条件被实测验证后才落地。
 
@@ -919,13 +957,13 @@ SQL 工具返回格式建议：
 
 - 不删除 upstream 插件。
 - 不复用 `com.google.*` 命名空间。
-- 桌面构建默认禁用或隐藏 `com.google.PerfettoMcp`，避免两个 AI Chat 同时
-  默认出现在侧边栏。实现方式：在 `patches/perfetto/` 下加一个 patch
-  （比如 `0002-hide-upstream-mcp-when-fork-flag.patch`），作用于
-  `third_party/perfetto/ui/src/frontend/index.ts`，在
-  `window.__PERFETTO_FORK__?.hideUpstreamMcp` 为 true 时过滤掉
-  `com.google.PerfettoMcp`。
-- 如两个插件都启用，菜单文案需要区分，例如 `AI Chat` 与 `Gemini MCP Chat`。
+- 两个插件在桌面构建中**共存**。阶段 1 验证(2026-05-08)确认上游
+  `com.google.PerfettoMcp` 在 Tauri WKWebView 中可正常激活,Gemini SDK
+  调用链路完整跑通;有 Gemini API key 的用户直接使用上游的 AI Chat。
+- fork 自有插件提供独立的 AI Chat 入口,覆盖非 Gemini 的 Provider(阶段 2
+  优先 DeepSeek + ZAI 经 OpenAI-compat,Anthropic 延后)。两个入口的菜单
+  文案需要区分 —— 例如上游沿用 `AI Chat`(仅 Gemini,在 `current_trace`
+  section),fork 命名为 `Multi-LLM Chat`(或类似)。
 
 ## 19. 测试计划
 
@@ -1002,7 +1040,7 @@ Tauri smoke test 在 MVP 阶段可以先使用人工 checklist，后续再自动
 - `com.google.PerfettoMcp` 是否有值得移植的 tool 更新。
 - `third_party/perfetto/ui/out/dist` 结构（特别是 `dist/<version>/`）未
   变化或已被 Tauri 配置吸收。
-- Service Worker bypass 与 `hideUpstreamMcp` 两个 patch 行为在新构建后
+- Service Worker bypass patch 行为在新构建后
   保持一致。
 - `third_party/perfetto/ui/src/frontend/index.ts` 的 CSP 没发生影响
   Provider endpoint 的变化。

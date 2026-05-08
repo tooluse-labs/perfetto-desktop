@@ -406,7 +406,6 @@ declare global {
   interface Window {
     __PERFETTO_FORK__?: {
       readonly desktop: boolean;
-      readonly hideUpstreamMcp: boolean;
     };
   }
 }
@@ -419,9 +418,15 @@ injection:
 ```ts
 window.__PERFETTO_FORK__ = Object.freeze({
   desktop: true,
-  hideUpstreamMcp: true,
 });
 ```
+
+The earlier draft also carried a `hideUpstreamMcp` flag, paired with
+patch slot `0002-hide-upstream-mcp-when-fork-flag.patch`. Phase 1
+verification (2026-05-08) showed upstream `com.google.PerfettoMcp`
+works in the Tauri WKWebView, so the fork plugin coexists with it
+instead of hiding it; the flag and the patch slot are both removed
+(see §10 and §14).
 
 The implementation lives as a patch file under `patches/perfetto/`
 (e.g., `0001-bypass-sw-when-fork-flag.patch`), applied to
@@ -598,8 +603,8 @@ Must-haves:
 - Stop interrupts an in-flight Provider request via `AbortSignal` (or
   an equivalent mechanism). If a tool is currently executing, the
   loop stops at its next iteration boundary.
-- `com.google.PerfettoMcp` is not visible by default in the fork
-  desktop build, so there is only one AI Chat entry.
+- `com.google.PerfettoMcp` (upstream Gemini chat) coexists with the
+  fork-owned plugin's chat entry; menu labels disambiguate them.
 - `(cd third_party/perfetto && ./ui/build --typecheck)` and
   `(cd third_party/perfetto && ./ui/run-unittests)` pass.
 - macOS Apple Silicon arm64 produces a runnable installer or `.app`.
@@ -659,39 +664,80 @@ Constraints:
 ### Phase 1: MVP
 
 - Stand up the `desktop/` Tauri project.
-- Get Perfetto UI's static assets loading.
-- Add the `com.tooluselabs.PerfettoDesktop` plugin entry.
-- Support Gemini and OpenAI-compatible.
-- Support model config, API key, and system prompt.
-- Support basic trace tools and the SQL query tool.
-- Prefer system secure storage. If blocked, fall back to in-session
-  memory; never localStorage.
-- Disable or hide `com.google.PerfettoMcp` in the desktop build.
+- Get Perfetto UI's static assets loading (incl. WKWebView 32-bit
+  WASM workaround for the Memory64 incompatibility, see §6.1).
 - Bypass or align with Service Worker in the desktop build.
+- Verify upstream `com.google.PerfettoMcp` works in the Tauri shell
+  for users who supply a Gemini API key. Coexist with it; do not
+  hide.
 
 Acceptance:
 
 - The desktop app opens locally.
-- After loading a trace, AI Chat is reachable.
-- Gemini and one OpenAI-compatible Provider each complete a tool
-  call.
+- WASM, workers, and the versioned asset directory load under Tauri.
 - `(cd third_party/perfetto && ./ui/build --typecheck)` passes.
 - macOS desktop artifact runs.
+- Upstream `com.google.PerfettoMcp` plugin activates after trace
+  load, AI Chat menu appears, Gemini API call round-trips end-to-end
+  (CSP, fetch streaming, SDK chain all verified in WKWebView on
+  2026-05-08).
+
+Phase 1 finding: the original plan to hide `com.google.PerfettoMcp`
+and re-implement Gemini support inside the fork plugin is dropped.
+Upstream works; the fork plugin stays out of the Gemini path entirely
+and focuses on Providers upstream does not cover (see Phase 2).
 
 ### Phase 2: Productization
 
-- Cross-platform compatibility and recovery for API key secure
-  storage.
-- Anthropic and Ollama support.
-- Tool-call result truncation, error diagnostics, and retries.
+- Add the fork-owned `com.tooluselabs.PerfettoDesktop` plugin with a
+  parallel AI Chat entry, providing Providers that upstream
+  `com.google.PerfettoMcp` does not cover.
+- Provider priority order:
+  1. **DeepSeek and ZAI (Zhipu/GLM)** as the primary cut, both via
+     a single OpenAI-compatible Provider with a configurable base
+     URL. The same Provider class covers a wide ecosystem at zero
+     extra implementation cost: Kimi (Moonshot), MiniMax, Qwen
+     (Alibaba DashScope), Doubao (Volcano Ark), OpenAI itself, local
+     Ollama / LM Studio / vLLM, and aggregator gateways such as
+     OpenRouter. The Settings UI ships a preset list (DeepSeek, ZAI,
+     Kimi, MiniMax, Qwen, Doubao, OpenAI, Ollama, "Custom") plus a
+     free-form base URL field.
+  2. **Anthropic (Claude)** as a deferred follow-up. Claude Messages
+     API has its own protocol (different endpoint, header auth,
+     content-block message shape, distinct tool-use schema), so it
+     needs a separate Provider class using `@anthropic-ai/sdk`. Not
+     blocking Phase 2 acceptance; users who specifically want Claude
+     can either wait, use a translating gateway through the
+     OpenAI-compat Provider, or use perfetto-mcp-rs from inside
+     Claude Code.
+- Provider abstraction implements the manual tool-call loop per §6.3
+  (Gemini's `automaticFunctionCalling` is not used).
+- Settings page for Provider selection, base URL, API key, model,
+  system prompt.
+- Prefer system secure storage for API keys. If blocked, fall back
+  to in-session memory; never localStorage.
+- Tool-call result truncation, error diagnostics, retries.
+- Cross-platform CI: Linux / Windows runners producing installers.
 - Provider adapter unit tests.
-- Smoke tests for macOS / Windows / Linux installers.
 
 Acceptance:
 
-- At least 4 Provider classes are configurable.
+- DeepSeek and ZAI Providers each complete a tool call.
 - Tool-call failures show a clear UI error.
-- At least one of the three platforms produces a runnable installer.
+- At least one platform beyond macOS produces a runnable installer.
+
+Anthropic Provider is a stretch goal; ship it when the OpenAI-compat
+path is stable.
+
+For users who do not need the desktop GUI and just want their MCP
+client (Claude Code, Codex, Cursor, Claude Desktop) to analyze a
+trace file headlessly, [`tooluse-labs/perfetto-mcp-rs`](https://github.com/tooluse-labs/perfetto-mcp-rs)
+is the recommended companion. It is a standalone Rust binary that
+wraps `trace_processor_shell` and exposes PerfettoSQL plus
+domain-specific Chrome tools over stdio MCP. Perfetto Desktop and
+perfetto-mcp-rs are complementary, not competing: Perfetto Desktop
+gives you the GUI and in-app chat; perfetto-mcp-rs gives you headless
+trace tools wired into your existing agent.
 
 ### Phase 3: Long-term Maintenance
 
@@ -825,9 +871,15 @@ or `git diff` against the pinned SHA. Expected patch slots:
 
 | Patch | Purpose | Required? |
 | --- | --- | --- |
-| `0001-bypass-sw-when-fork-flag.patch` | Gate `serviceWorkerController.install()` on `window.__PERFETTO_FORK__?.desktop` | Conditional: only if Tauri's WebView rejects Perfetto's SW |
-| `0002-hide-upstream-mcp-when-fork-flag.patch` | Filter `com.google.PerfettoMcp` out of plugin registration when `hideUpstreamMcp` is set | Optional in Phase 2; alternative is two AI Chat menu entries with distinct labels |
+| `0001-bypass-sw-when-fork-flag.patch` | Gate `serviceWorkerController.install()` on `window.__PERFETTO_FORK__?.desktop` | Conditional: only if Tauri's WebView rejects Perfetto's SW (Phase 1 verification: WKWebView already skips SW registration via the user-disabled path, so this patch has not been required) |
 | `0003-strip-analytics-from-csp.patch` | Conditionally remove Google Analytics/GTM sources from runtime meta CSP in desktop mode | Optional; depends on §15 CSP option chosen |
+
+Previously, slot `0002-hide-upstream-mcp-when-fork-flag.patch` was
+reserved for filtering `com.google.PerfettoMcp` out of plugin
+registration when the fork plugin shipped its own Gemini path. That
+slot is removed: Phase 1 verified upstream MCP works in the Tauri
+WKWebView, so the fork plugin coexists with it (see §10) and there
+is no reason to hide it.
 
 Phase 1 expects zero patches. Each patch only lands when its trigger
 is verified empirically.
@@ -1028,15 +1080,16 @@ Relationship with `com.google.PerfettoMcp`:
 
 - Do not delete the upstream plugin.
 - Do not reuse the `com.google.*` namespace.
-- The desktop build hides `com.google.PerfettoMcp` by default to avoid
-  two AI Chat entries in the sidebar. Implementation: a patch under
-  `patches/perfetto/` (e.g.,
-  `0002-hide-upstream-mcp-when-fork-flag.patch`) applied to
-  `third_party/perfetto/ui/src/frontend/index.ts`, filtering
-  `com.google.PerfettoMcp` out of plugin registration when
-  `window.__PERFETTO_FORK__?.hideUpstreamMcp` is set.
-- If both plugins are enabled, distinguish menu labels, e.g.,
-  `AI Chat` and `Gemini MCP Chat`.
+- Both plugins coexist in the desktop build. Phase 1 verification
+  (2026-05-08) confirmed upstream `com.google.PerfettoMcp` activates
+  cleanly in the Tauri WKWebView and the Gemini SDK chain works
+  end-to-end; users with a Gemini API key get the upstream AI Chat
+  for free.
+- The fork-owned plugin owns its own AI Chat entry with non-Gemini
+  Providers (Phase 2 priority: DeepSeek + ZAI via OpenAI-compat,
+  Anthropic deferred). Menu labels disambiguate the two entries —
+  e.g., upstream's `AI Chat` (Gemini-only, on `current_trace`
+  section) and the fork's `Multi-LLM Chat` (or similar).
 
 ## 19. Test Plan
 
@@ -1127,8 +1180,7 @@ After every DEPS bump, run `./scripts/setup.sh` and verify:
 - `third_party/perfetto/ui/out/dist`'s structure (especially
   `dist/<version>/`) is unchanged or accommodated by the Tauri
   config.
-- The Service Worker bypass and `hideUpstreamMcp` patches behave the
-  same after the new build.
+- The Service Worker bypass behaves the same after the new build.
 - The CSP in `third_party/perfetto/ui/src/frontend/index.ts` has not
   changed in a way that affects Provider endpoints.
 - Tauri 2 plugin or capability schema changes have not introduced

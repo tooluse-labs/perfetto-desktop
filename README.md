@@ -80,6 +80,17 @@ Pre-MVP, Phase 1 (desktop wrapper).
   fails loudly if a patch no longer applies cleanly, so upstream drift
   is caught at setup.
 
+## Headless companion
+
+If you do not need the GUI and just want your existing MCP client
+(Claude Code, Codex, Cursor, Claude Desktop, …) to query a Perfetto
+trace, use [`tooluse-labs/perfetto-mcp-rs`](https://github.com/tooluse-labs/perfetto-mcp-rs).
+It is a standalone Rust binary that wraps `trace_processor_shell`
+and exposes PerfettoSQL plus dedicated Chrome trace tools over stdio
+MCP. The two projects are complementary, not competing: Perfetto
+Desktop gives you the GUI and in-app chat; perfetto-mcp-rs slots
+Perfetto trace tools into your existing agent workflow.
+
 ## License
 
 Apache 2.0, same as upstream Perfetto.
