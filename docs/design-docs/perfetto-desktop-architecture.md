@@ -872,14 +872,21 @@ or `git diff` against the pinned SHA. Expected patch slots:
 | Patch | Purpose | Required? |
 | --- | --- | --- |
 | `0001-bypass-sw-when-fork-flag.patch` | Gate `serviceWorkerController.install()` on `window.__PERFETTO_FORK__?.desktop` | Conditional: only if Tauri's WebView rejects Perfetto's SW (Phase 1 verification: WKWebView already skips SW registration via the user-disabled path, so this patch has not been required) |
+| `0002-default-enable-perfetto-mcp.patch` | Append `'com.google.PerfettoMcp'` to upstream's `defaultPlugins` allowlist in `ui/src/core/embedder/default_plugins.ts` | **Landed 2026-05-08.** First-run users get the AI Chat menu directly after a trace loads, without manually toggling the plugin in `Plugins` settings. Honors any later user toggle (the array only seeds the feature flag default). |
 | `0003-strip-analytics-from-csp.patch` | Conditionally remove Google Analytics/GTM sources from runtime meta CSP in desktop mode | Optional; depends on §15 CSP option chosen |
 
-Previously, slot `0002-hide-upstream-mcp-when-fork-flag.patch` was
-reserved for filtering `com.google.PerfettoMcp` out of plugin
-registration when the fork plugin shipped its own Gemini path. That
-slot is removed: Phase 1 verified upstream MCP works in the Tauri
-WKWebView, so the fork plugin coexists with it (see §10) and there
-is no reason to hide it.
+Slot `0002-default-enable-perfetto-mcp.patch` previously documented a
+different intent (filter `com.google.PerfettoMcp` out of plugin
+registration when the fork plugin shipped its own Gemini path). After
+Phase 1's verification that upstream MCP works cleanly in the Tauri
+WKWebView, the fork plugin coexists with upstream instead of hiding
+it (see §10), so the slot was repurposed to default-enable upstream
+MCP for first-run users.
+
+`scripts/apply-patches.sh` is idempotent: it skips a patch if
+`git apply --reverse --check` succeeds (i.e., the patch is already
+applied), and only forward-applies otherwise. Re-running `setup.sh`
+on an already-pinned, already-patched checkout is a no-op.
 
 Phase 1 expects zero patches. Each patch only lands when its trigger
 is verified empirically.

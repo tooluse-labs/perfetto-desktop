@@ -5,7 +5,10 @@
 set -euo pipefail
 shopt -s nullglob
 
-cd "$(git rev-parse --show-toplevel)"
+# Anchor on the script's own location, not git rev-parse, because the
+# Perfetto checkout under third_party/perfetto/ is itself a git repo —
+# rev-parse from inside it returns the inner toplevel, not ours.
+cd "$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 PERFETTO_DIR=third_party/perfetto
 PATCHES=(patches/perfetto/*.patch)
@@ -22,6 +25,12 @@ fi
 
 for p in "${PATCHES[@]}"; do
   abs=$(cd "$(dirname "$p")" && pwd)/$(basename "$p")
+  # Idempotent: if the patch can be applied in reverse, it is already
+  # applied — skip it. Otherwise check forward-applicability and apply.
+  if git -C "$PERFETTO_DIR" apply --reverse --check "$abs" 2>/dev/null; then
+    echo "==> Already applied, skipping: $p"
+    continue
+  fi
   echo "==> Applying $p"
   if ! git -C "$PERFETTO_DIR" apply --check "$abs"; then
     echo "ERROR: $p does not apply cleanly to current $PERFETTO_DIR." >&2

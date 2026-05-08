@@ -6,7 +6,10 @@
 #   scripts/update-perfetto.sh latest          # pin to current upstream HEAD
 set -euo pipefail
 
-cd "$(git rev-parse --show-toplevel)"
+# Anchor on the script's own location, not git rev-parse, because the
+# Perfetto checkout under third_party/perfetto/ is itself a git repo —
+# rev-parse from inside it returns the inner toplevel, not ours.
+cd "$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 # shellcheck disable=SC1091
 source DEPS

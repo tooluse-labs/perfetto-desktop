@@ -767,12 +767,18 @@ patch**。
 | Patch | 用途 | 是否必需？ |
 | --- | --- | --- |
 | `0001-bypass-sw-when-fork-flag.patch` | 在 `serviceWorkerController.install()` 前 gate `window.__PERFETTO_FORK__?.desktop` | 取决实测:仅当 Tauri WebView 拒绝 Perfetto SW 时需要(阶段 1 验证:WKWebView 已经走 user-disabled 分支跳过 SW 注册,该 patch 至今没有触发) |
+| `0002-default-enable-perfetto-mcp.patch` | 把 `'com.google.PerfettoMcp'` 追加进上游 `ui/src/core/embedder/default_plugins.ts` 的 `defaultPlugins` 白名单 | **2026-05-08 落地。** 首次用户加载 trace 后 sidebar 直接出现 AI Chat 菜单,无需先去 Plugins 设置页手动 toggle。该数组仅决定 feature flag 默认值,用户后续手动 toggle 仍然生效。 |
 | `0003-strip-analytics-from-csp.patch` | 桌面模式下从运行时 meta CSP 剥离 GA/GTM 源 | 可选;取决于 §15 选定的 CSP 策略 |
 
-之前曾保留 slot `0002-hide-upstream-mcp-when-fork-flag.patch`,用于在
-fork 插件自带 Gemini 路径时把 `com.google.PerfettoMcp` 从插件注册中过滤
-掉。该 slot 已**移除**:阶段 1 验证表明上游 MCP 在 Tauri WKWebView 下完全
-可用,fork 插件改为与之共存(详见 §10),没有必要再隐藏。
+slot `0002-default-enable-perfetto-mcp.patch` 之前曾承载另一个用途
+(在 fork 插件自带 Gemini 路径时把 `com.google.PerfettoMcp` 从插件注册
+中过滤掉)。阶段 1 验证表明上游 MCP 在 Tauri WKWebView 下完全可用,fork
+插件改为与之共存(详见 §10),slot 因此被重新用于"为首次用户默认启用
+上游 MCP"这件事。
+
+`scripts/apply-patches.sh` 是幂等的: `git apply --reverse --check`
+成功(即 patch 已应用)时跳过,只有未应用且能正向 apply 时才落到 worktree。
+在已经固定 SHA、已经打过 patch 的 checkout 上重新跑 setup.sh 是 no-op。
 
 Phase 1 预期 0 patch。每个 patch 只在它的触发条件被实测验证后才落地。
 
