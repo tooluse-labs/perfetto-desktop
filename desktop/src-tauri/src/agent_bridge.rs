@@ -97,15 +97,24 @@ struct ClientInfo {
 #[serde(rename_all = "camelCase")]
 pub struct AgentBridgeSnapshot {
     status: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
     port: Option<u16>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     endpoint: Option<String>,
     fallback_port: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
     session_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pending_client: Option<ClientInfo>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     connected_client: Option<ClientInfo>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     last_error: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     last_method: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     claude_command: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     codex_command: Option<String>,
 }
 

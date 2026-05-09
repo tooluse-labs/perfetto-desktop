@@ -179,8 +179,8 @@ class AgentBridgePage implements m.ClassComponent<{readonly app: App}> {
   }
 
   private renderClientSection(status?: AgentBridgeSnapshot): m.Children {
-    const pending = status?.pendingClient;
-    const connected = status?.connectedClient;
+    const pending = status?.pendingClient ?? undefined;
+    const connected = status?.connectedClient ?? undefined;
     return m(
       Section,
       {title: 'Connections'},
@@ -305,7 +305,7 @@ function renderMeta(label: string, value: string): m.Children {
 }
 
 function renderCommandBlock(label: string, command?: string): m.Children {
-  if (command === undefined) return null;
+  if (command === undefined || command === null) return null;
   return m('div', {style: {marginTop: '12px'}}, [
     m('strong', label),
     m(CodeSnippet, {text: command, language: 'sh'}),
