@@ -6,34 +6,19 @@
 //
 //      http://www.apache.org/licenses/LICENSE-2.0
 
-import m from 'mithril';
 import {PerfettoPlugin} from '../../public/plugin';
 import {Trace} from '../../public/trace';
-import {ChatPage} from './chat_page';
 
 export default class PerfettoDesktopPlugin implements PerfettoPlugin {
   static readonly id = 'com.tooluselabs.PerfettoDesktop';
   static readonly description = `
-    Tooluse Labs Multi-LLM Chat for Perfetto Desktop. Coexists with upstream
-    com.google.PerfettoMcp (Gemini) and adds OpenAI-compatible providers such
-    as DeepSeek and ZAI.
+    Tooluse Labs desktop integration plugin for Perfetto Desktop. This
+    fork-owned plugin is the extension point for desktop-only features such as
+    the planned local Agent Bridge.
   `;
 
-  async onTraceLoad(trace: Trace): Promise<void> {
-    trace.pages.registerPage({
-      route: '/multillmchat',
-      render: () => m(ChatPage, {trace}),
-    });
-    trace.sidebar.addMenuItem({
-      section: 'current_trace',
-      text: 'Multi-LLM Chat',
-      href: '#!/multillmchat',
-      // Distinct from upstream com.google.PerfettoMcp's 'smart_toy' so
-      // both entries are visually disambiguated when both plugins are
-      // enabled.
-      icon: 'forum',
-      // Anchored on upstream PerfettoMcp's sortOrder=10; we sit just below.
-      sortOrder: 11,
-    });
+  async onTraceLoad(_trace: Trace): Promise<void> {
+    // Reserved for desktop-only integrations. Keep the plugin enabled so the
+    // overlay and default-plugin patch path remain exercised.
   }
 }
