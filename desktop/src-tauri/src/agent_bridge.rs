@@ -654,25 +654,12 @@ fn initialize_response(
         ) {
             return json_rpc_error(id, -32001, "Agent Bridge is not accepting clients");
         }
-        // Do not overwrite an explicit pending approval. Once a client is
-        // authorized, a later initialize with the same bearer session is a
-        // normal CLI restart/reconnect and can replace the displayed client
-        // metadata without another manual approval. Revoke or rotate the
-        // session to force confirmation again.
-        if inner.pending_client.is_some() {
-            return json_rpc_error(
-                id,
-                -32010,
-                "Agent Bridge already has a pending client authorization",
-            );
-        }
-        if inner.connected_client.is_some() {
-            inner.connected_client = Some(client);
-            inner.mode = BridgeMode::Connected;
-        } else {
-            inner.pending_client = Some(client);
-            inner.mode = BridgeMode::PendingAuthorization;
-        }
+        // The one-time bearer is the authorization gesture for wave 1's
+        // read-only metadata tool. A fresh initialize from the same session can
+        // replace the displayed client metadata without another Desktop click.
+        inner.pending_client = None;
+        inner.connected_client = Some(client);
+        inner.mode = BridgeMode::Connected;
     }
 
     json_response(json!({

@@ -146,7 +146,6 @@ class AgentBridgePage implements m.ClassComponent<{readonly app: App}> {
       },
       [
         this.renderStatusSection(attrs.app, status),
-        this.renderApprovalSection(status),
         this.renderCommandSection(status),
         this.renderConnectionSection(status),
       ],
@@ -217,50 +216,15 @@ class AgentBridgePage implements m.ClassComponent<{readonly app: App}> {
         return m(Callout, {intent: Intent.Warning}, 'Bridge stopped.');
       case 'Listening':
         return m(Callout, {intent: Intent.Success}, 'Bridge ready.');
-      case 'Pending Authorization':
-        return m(Callout, {intent: Intent.Warning}, 'Client requesting access.');
       case 'Connected':
         return m(Callout, {intent: Intent.Success}, 'Client connected.');
+      case 'Pending Authorization':
+        return m(Callout, {intent: Intent.Warning}, 'Client connecting.');
       case 'Error':
         return m(Callout, {intent: Intent.Danger}, 'Bridge error.');
       default:
         return null;
     }
-  }
-
-  private renderApprovalSection(status?: AgentBridgeSnapshot): m.Children {
-    const pending = status?.pendingClient ?? undefined;
-    if (pending === undefined) return null;
-
-    return m(
-      Section,
-      {title: 'Authorization Request'},
-      m(Callout, {intent: Intent.Warning}, [
-        m('strong', pending.name),
-        ' is requesting access.',
-      ]),
-      m('div', {style: clientRowStyle}, [
-        m('div', [
-          m('div', {style: subtleStyle}, 'Client ID'),
-          m('code', {style: codeStyle}, pending.clientId),
-        ]),
-        m(ButtonBar, [
-          m(Button, {
-            label: 'Allow',
-            icon: 'check',
-            intent: Intent.Primary,
-            variant: ButtonVariant.Filled,
-            onclick: () => this.runCommand('agent_bridge_allow_pending'),
-          }),
-          m(Button, {
-            label: 'Deny',
-            icon: 'close',
-            intent: Intent.Danger,
-            onclick: () => this.runCommand('agent_bridge_deny_pending'),
-          }),
-        ]),
-      ]),
-    );
   }
 
   private renderConnectionSection(status?: AgentBridgeSnapshot): m.Children {
