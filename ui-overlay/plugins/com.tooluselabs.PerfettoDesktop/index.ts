@@ -322,13 +322,13 @@ export default class PerfettoDesktopPlugin implements PerfettoPlugin {
 
   static onActivate(app: App): void {
     app.pages.registerPage({
-      route: '/agent-bridge',
+      route: '/agent_bridge',
       render: () => m(AgentBridgePage, {app}),
     });
     app.sidebar.addMenuItem({
       section: 'settings',
       text: 'Agent Bridge',
-      href: '#!/agent-bridge',
+      href: '#!/agent_bridge',
       icon: 'hub',
       sortOrder: 35,
     });
