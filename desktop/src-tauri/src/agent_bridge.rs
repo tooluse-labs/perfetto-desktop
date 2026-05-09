@@ -364,12 +364,6 @@ impl SessionConfig {
         let endpoint = format!("http://127.0.0.1:{port}{MCP_PATH}");
         let expected_authorization = format!("Bearer {secret}");
         let allowed_hosts = [format!("127.0.0.1:{port}"), format!("localhost:{port}")];
-        // TODO(review-H1): the Codex one-time form below mirrors the design
-        // doc's §5.1 inline-header syntax, which still needs CLI capability
-        // matrix verification (see review file appendix C.4 step 1). If a
-        // target Codex version cannot configure HTTP MCP `headers`, regenerate
-        // this template from the matrix conclusion; do not silently fall back
-        // to query-string tokens.
         let claude_json = json!({
             "mcpServers": {
                 "perfetto-desktop": {
@@ -383,7 +377,7 @@ impl SessionConfig {
             "claude --strict-mcp-config --mcp-config '{claude_json}'"
         );
         let codex_command = format!(
-            "codex -c 'mcp_servers.perfetto_desktop.url=\"{endpoint}\"' -c 'mcp_servers.perfetto_desktop.headers.Authorization=\"{expected_authorization}\"'"
+            "PERFETTO_DESKTOP_MCP_TOKEN='{secret}' codex -c 'mcp_servers.perfetto_desktop.url=\"{endpoint}\"' -c 'mcp_servers.perfetto_desktop.bearer_token_env_var=\"PERFETTO_DESKTOP_MCP_TOKEN\"'"
         );
         Self {
             port,

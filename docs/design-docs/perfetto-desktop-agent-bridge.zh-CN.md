@@ -108,14 +108,15 @@ server 进程；本方案中 server 已经由 GUI app 启动，所以外部 agen
    - 如果固定端口冲突，Desktop 回退到 OS-assigned ephemeral port，并只显示
      一次性命令。
    - Bridge 是 per-window；多窗口下后启用的窗口使用 fallback port，并在 UI 中标明。
-5. Desktop 显示连接状态和复制按钮。默认复制 header-capable 的一次性命令模板，
+5. Desktop 显示连接状态和复制按钮。默认复制带 bearer 的一次性命令模板，
    具体语法需随目标 CLI 实测更新，例如：
 
    ```sh
    claude --strict-mcp-config --mcp-config '{"mcpServers":{"perfetto-desktop":{"type":"http","url":"http://127.0.0.1:38471/mcp","headers":{"Authorization":"Bearer <session-secret>"}}}}'
 
-   codex -c 'mcp_servers.perfetto_desktop.url="http://127.0.0.1:38471/mcp"' \
-     -c 'mcp_servers.perfetto_desktop.headers.Authorization="Bearer <session-secret>"'
+   PERFETTO_DESKTOP_MCP_TOKEN='<session-secret>' codex \
+     -c 'mcp_servers.perfetto_desktop.url="http://127.0.0.1:38471/mcp"' \
+     -c 'mcp_servers.perfetto_desktop.bearer_token_env_var="PERFETTO_DESKTOP_MCP_TOKEN"'
    ```
 
 6. 用户把命令粘贴到 Codex/Claude Code CLI。该连接只服务于当前 agent session；
@@ -129,15 +130,16 @@ server 进程；本方案中 server 已经由 GUI app 启动，所以外部 agen
 连接命令只作为 UI 输出。最终命令格式以对应 CLI 的当前 MCP 配置语法为准，Desktop
 实现时需要根据 Codex/Claude Code 的官方文档更新模板。当前设计假设：
 
-- Claude Code 支持 `--mcp-config` 和 `--strict-mcp-config`，适合一次性连接；是否支持
-  HTTP MCP `headers` 字段需要在目标版本实测。
-- Codex 支持 `-c/--config` runtime override；是否能稳定覆盖 nested
-  `mcp_servers.<name>.url` 和 header 配置需要在实现时用目标版本实测。
+- Claude Code 2.1.137 的 `mcp add --help` 明确支持 `--header`，一次性连接仍使用
+  `--mcp-config` / `--strict-mcp-config` 的 HTTP MCP `headers` 字段。
+- Codex CLI 0.128.0 的 `mcp add --help` 暴露 `--bearer-token-env-var`，未暴露通用
+  header 参数；Phase B 模板使用 `PERFETTO_DESKTOP_MCP_TOKEN` 环境变量和
+  `mcp_servers.<name>.bearer_token_env_var` runtime override。
 - 如果 Codex runtime override 不稳定，Desktop 可以生成临时 config 目录命令，
   例如 `CODEX_HOME=<temp-dir> codex ...`，或退回持久配置 + Desktop 内授权。
-- Phase B 开工前先做 CLI capability matrix：Claude Code、Codex、Cursor/generic
-  JSON 是否支持 HTTP MCP headers。支持 header 的 host 默认使用 Bearer；不支持的
-  host 只能走 degraded fallback，并在 Desktop 确认弹窗中明确提示风险。
+- Phase B 的 CLI capability matrix 需要随 host 版本复测。当前 wave 1 覆盖
+  Claude Code `headers` 和 Codex `bearer_token_env_var`；Cursor/generic JSON 留到
+  后续 host 支持矩阵。
 
 Phase B 不在 UI 中提供持久配置按钮。bearer 每会话刷新，没有 secret 的持久 URL
 （例如 `claude mcp add --transport http perfetto-desktop <url>`）连不上 server，留着
@@ -501,8 +503,9 @@ tier，并通过 `notifications/resources/list_changed` 通知 agent 刷新上�
 
 ## 13. 待定问题
 
-- Codex 的 `-c/--config` runtime override 是否能稳定表达 nested HTTP MCP server。
-- Claude Code 和 Codex 的 HTTP MCP 配置是否稳定支持 `headers.Authorization`。
+- Codex 的 `-c/--config` runtime override 是否能稳定表达 nested HTTP MCP server
+  和 `bearer_token_env_var`。
+- 是否需要支持 Cursor/generic JSON 的 HTTP MCP header 配置。
 - 如果 Codex 一次性 runtime config 不稳定，是否使用临时 `CODEX_HOME` 方案。
 - Claude/Codex 的一次性命令模板是否需要根据版本检测动态生成。
 - 不支持 header 的 host 是否接受 degraded fallback，还是要求用户先做持久配置。
