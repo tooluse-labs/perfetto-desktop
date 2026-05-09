@@ -40,6 +40,12 @@ type ResponseBody = Full<Bytes>;
 #[derive(Clone, Default)]
 pub struct AgentBridgeState {
     inner: Arc<Mutex<BridgeInner>>,
+    // Held outside `BridgeInner` so `agent_bridge_disable`'s
+    // `*inner = BridgeInner::default()` reset does not orphan a parked
+    // long-poll waiter on the WebView pump. The pump waits on this Notify;
+    // re-creating it across enable/disable would force the next request to
+    // sit through `RPC_LONG_POLL_TIMEOUT` before the pump notices.
+    mcp_request_notify: Arc<Notify>,
 }
 
 #[derive(Default)]
@@ -52,7 +58,6 @@ struct BridgeInner {
     trace_context: Option<TraceContext>,
     mcp_requests: VecDeque<AgentBridgeRpcRequest>,
     mcp_responders: HashMap<String, oneshot::Sender<AgentBridgeRpcResponse>>,
-    mcp_request_notify: Arc<Notify>,
     connection_revoker: Option<watch::Sender<()>>,
     shutdown: Option<oneshot::Sender<()>>,
     last_error: Option<String>,
@@ -436,7 +441,7 @@ pub fn agent_bridge_set_trace_context(
 pub async fn agent_bridge_next_rpc_request(
     state: State<'_, AgentBridgeState>,
 ) -> Result<Option<AgentBridgeRpcRequest>, String> {
-    let notify = {
+    {
         let mut inner = state
             .inner()
             .inner
@@ -445,12 +450,12 @@ pub async fn agent_bridge_next_rpc_request(
         if let Some(request) = inner.mcp_requests.pop_front() {
             return Ok(Some(request));
         }
-        inner.mcp_request_notify.clone()
-    };
+    }
 
     // Park until either a request lands or the long-poll bound elapses. The
     // WebView pump will immediately re-issue on `None`, so the timeout is
     // strictly an IPC-heartbeat ceiling, not a backoff.
+    let notify = state.inner().mcp_request_notify.clone();
     let _ = timeout(RPC_LONG_POLL_TIMEOUT, notify.notified()).await;
 
     let mut inner = state
@@ -939,7 +944,7 @@ async fn proxy_mcp_request(
     params: Option<Value>,
     state: &AgentBridgeState,
 ) -> Response<ResponseBody> {
-    let (request, receiver, notify) = {
+    let (request, receiver) = {
         let mut inner = match state.inner.lock() {
             Ok(inner) => inner,
             Err(_) => return json_rpc_error(id, -32603, "state lock poisoned"),
@@ -958,9 +963,9 @@ async fn proxy_mcp_request(
             .mcp_responders
             .insert(request.request_id.clone(), sender);
         inner.mcp_requests.push_back(request.clone());
-        (request, receiver, inner.mcp_request_notify.clone())
+        (request, receiver)
     };
-    notify.notify_one();
+    state.mcp_request_notify.notify_one();
 
     let response = match timeout(MCP_REQUEST_TIMEOUT, receiver).await {
         Ok(Ok(response)) => response,
