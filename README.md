@@ -97,24 +97,25 @@ Exposed tools reuse upstream Perfetto MCP naming where possible, including:
 - `show-perfetto-sql-view`
 - `show-timeline`
 
-## Why a local MCP bridge
+## Why CLI Agent, not extend AI Chat
 
-**Why not extend the upstream AI Chat panel?** Upstream's AI Chat is built
-around the Gemini Files API and a Gemini-specific tool contract; adding
-another provider means rebuilding the chat UI, the streaming, the file
-upload, and the model adapters. CLI Agent instead lets the user's existing
-Codex / Claude Code / Cursor / Claude Desktop install handle conversation,
-streaming, retries, and account management. Perfetto Desktop only exposes
-the loaded trace as standard MCP tools, so any host that speaks MCP works
-without us shipping a per-provider chat surface.
+Upstream's AI Chat is built around the Gemini Files API and a
+Gemini-specific tool contract; adding another provider means rebuilding
+the chat UI, the streaming, the file upload, and the model adapters. CLI
+Agent instead lets the user's existing Codex / Claude Code / Cursor /
+Claude Desktop install handle conversation, streaming, retries, and
+account management. Perfetto Desktop only exposes the loaded trace as
+standard MCP tools, so any host that speaks MCP works without us shipping
+a per-provider chat surface.
 
-**Why no embedded terminal?** Perfetto Desktop never spawns a PTY and
-never proxies the agent CLI. The user's CLI lives in the user's terminal,
-which keeps the model API key, the agent's working directory, and any
-shell history outside Perfetto Desktop's process. The sidebar's planned
-`Open in Terminal` QoL (Phase C) only opens a system terminal with the
-connection command pre-filled — the user still presses Enter, and the
-agent process is theirs to manage.
+## Why no embedded terminal
+
+Perfetto Desktop never spawns a PTY and never proxies the agent CLI. The
+user's CLI lives in the user's terminal, which keeps the model API key,
+the agent's working directory, and any shell history outside Perfetto
+Desktop's process. The sidebar's planned `Open in Terminal` QoL (Phase C)
+only opens a system terminal with the connection command pre-filled — the
+user still presses Enter, and the agent process is theirs to manage.
 
 ## Design
 
