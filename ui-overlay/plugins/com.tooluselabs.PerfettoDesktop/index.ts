@@ -10,7 +10,7 @@ import m from 'mithril';
 import {App} from '../../public/app';
 import {PerfettoPlugin} from '../../public/plugin';
 import {Trace} from '../../public/trace';
-import {Button, ButtonBar} from '../../widgets/button';
+import {Button, ButtonBar, ButtonVariant} from '../../widgets/button';
 import {Callout} from '../../widgets/callout';
 import {CodeSnippet} from '../../widgets/code_snippet';
 import {Intent} from '../../widgets/common';
@@ -97,13 +97,15 @@ function snapshotsEqual(
 class AgentBridgePage implements m.ClassComponent<{readonly app: App}> {
   private status?: AgentBridgeSnapshot;
   private error?: string;
+  private copied?: string;
   private refreshTimer?: number;
+  private manuallyStopped = false;
   // Monotonic sequence so a slow `refresh` cannot overwrite a newer snapshot
   // produced by a button click in `runCommand`.
   private inflight = 0;
 
   oncreate(): void {
-    void this.refresh();
+    void this.refresh({autoStart: true});
     this.refreshTimer = window.setInterval(() => {
       void this.refresh();
     }, 2000);
@@ -128,84 +130,134 @@ class AgentBridgePage implements m.ClassComponent<{readonly app: App}> {
         },
       },
       [
-        m(
-          Section,
-          {title: 'Agent Bridge'},
-          m('div', {style: metaGridStyle}, [
-            renderMeta('Status', status?.status ?? 'Loading'),
-            renderMeta(
-              'Trace',
-              attrs.app.trace === undefined ? 'No trace loaded' : 'Trace loaded',
-            ),
-            renderMeta('Endpoint', status?.endpoint ?? 'Disabled'),
-            renderMeta(
-              'Port',
-              status?.port === undefined
-                ? 'None'
-                : `${status.port}${status.fallbackPort ? ' fallback' : ''}`,
-            ),
-          ]),
-          this.error !== undefined &&
-            m(Callout, {intent: Intent.Danger}, this.error),
-          status?.lastError !== undefined &&
-            m(Callout, {intent: Intent.Warning}, status.lastError),
-          m(ButtonBar, [
-            m(Button, {
-              label: 'Enable',
-              disabled: isEnabled(status),
-              onclick: () => this.runCommand('agent_bridge_enable'),
-            }),
-            m(Button, {
-              label: 'Disable',
-              disabled: !isEnabled(status),
-              onclick: () => this.runCommand('agent_bridge_disable'),
-            }),
-            m(Button, {
-              label: 'Regenerate Session',
-              disabled: !isEnabled(status) || status?.status === 'Starting',
-              onclick: () =>
-                this.runCommand('agent_bridge_regenerate_session'),
-            }),
-            m(Button, {
-              label: 'Refresh',
-              onclick: () => this.refresh(),
-            }),
-          ]),
-        ),
-        this.renderClientSection(status),
+        this.renderStatusSection(attrs.app, status),
+        this.renderApprovalSection(status),
         this.renderCommandSection(status),
+        this.renderConnectionSection(status),
       ],
     );
   }
 
-  private renderClientSection(status?: AgentBridgeSnapshot): m.Children {
+  private renderStatusSection(app: App, status?: AgentBridgeSnapshot): m.Children {
+    return m(
+      Section,
+      {title: 'Agent Bridge'},
+      this.renderStatusCallout(status),
+      m('div', {style: metaGridStyle}, [
+        renderMeta('Status', status?.status ?? 'Starting'),
+        renderMeta(
+          'Trace',
+          app.trace === undefined ? 'No trace loaded' : 'Trace loaded',
+        ),
+        renderMeta('Endpoint', status?.endpoint ?? 'Starting'),
+        renderMeta(
+          'Port',
+          status?.port === undefined
+            ? 'None'
+            : `${status.port}${status.fallbackPort ? ' fallback' : ''}`,
+        ),
+      ]),
+      this.error !== undefined &&
+        m(Callout, {intent: Intent.Danger}, this.error),
+      status?.lastError !== undefined &&
+        m(Callout, {intent: Intent.Warning}, status.lastError),
+      m(ButtonBar, [
+        status?.status === 'Disabled' &&
+          m(Button, {
+            label: 'Start Bridge',
+            icon: 'play_arrow',
+            intent: Intent.Primary,
+            variant: ButtonVariant.Filled,
+            onclick: () => this.startBridge(),
+          }),
+        isEnabled(status) &&
+          m(Button, {
+            label: 'Stop Bridge',
+            icon: 'stop',
+            disabled: status?.status === 'Starting',
+            onclick: () => this.stopBridge(),
+          }),
+        isEnabled(status) &&
+          m(Button, {
+            label: 'Regenerate Session',
+            icon: 'refresh',
+            disabled: status?.status === 'Starting',
+            onclick: () => this.regenerateSession(),
+          }),
+        m(Button, {
+          label: 'Refresh',
+          icon: 'sync',
+          onclick: () => this.refresh(),
+        }),
+      ]),
+    );
+  }
+
+  private renderStatusCallout(status?: AgentBridgeSnapshot): m.Children {
+    switch (status?.status) {
+      case undefined:
+      case 'Starting':
+        return m(Callout, {intent: Intent.Primary}, 'Starting local bridge.');
+      case 'Disabled':
+        return m(Callout, {intent: Intent.Warning}, 'Bridge stopped.');
+      case 'Listening':
+        return m(Callout, {intent: Intent.Success}, 'Bridge ready.');
+      case 'Pending Authorization':
+        return m(Callout, {intent: Intent.Warning}, 'Client requesting access.');
+      case 'Connected':
+        return m(Callout, {intent: Intent.Success}, 'Client connected.');
+      case 'Error':
+        return m(Callout, {intent: Intent.Danger}, 'Bridge error.');
+      default:
+        return null;
+    }
+  }
+
+  private renderApprovalSection(status?: AgentBridgeSnapshot): m.Children {
+    const pending = status?.pendingClient ?? undefined;
+    if (pending === undefined) return null;
+
+    return m(
+      Section,
+      {title: 'Authorization Request'},
+      m(Callout, {intent: Intent.Warning}, [
+        m('strong', pending.name),
+        ' is requesting access.',
+      ]),
+      m('div', {style: clientRowStyle}, [
+        m('div', [
+          m('div', {style: subtleStyle}, 'Client ID'),
+          m('code', {style: codeStyle}, pending.clientId),
+        ]),
+        m(ButtonBar, [
+          m(Button, {
+            label: 'Allow',
+            icon: 'check',
+            intent: Intent.Primary,
+            variant: ButtonVariant.Filled,
+            onclick: () => this.runCommand('agent_bridge_allow_pending'),
+          }),
+          m(Button, {
+            label: 'Deny',
+            icon: 'close',
+            intent: Intent.Danger,
+            onclick: () => this.runCommand('agent_bridge_deny_pending'),
+          }),
+        ]),
+      ]),
+    );
+  }
+
+  private renderConnectionSection(status?: AgentBridgeSnapshot): m.Children {
     const pending = status?.pendingClient ?? undefined;
     const connected = status?.connectedClient ?? undefined;
     return m(
       Section,
-      {title: 'Connections'},
+      {title: 'Connection'},
       pending === undefined &&
         connected === undefined &&
-        m('p', {style: subtleStyle}, 'No pending or connected MCP client.'),
-      pending !== undefined &&
-        m('div', {style: clientRowStyle}, [
-          m('div', [
-            m('strong', 'Pending authorization'),
-            m('div', {style: subtleStyle}, pending.name),
-            m('code', {style: codeStyle}, pending.clientId),
-          ]),
-          m(ButtonBar, [
-            m(Button, {
-              label: 'Allow',
-              intent: Intent.Primary,
-              onclick: () => this.runCommand('agent_bridge_allow_pending'),
-            }),
-            m(Button, {
-              label: 'Deny',
-              onclick: () => this.runCommand('agent_bridge_deny_pending'),
-            }),
-          ]),
-        ]),
+        m('p', {style: subtleStyle}, 'No client connected.'),
+      pending !== undefined && m('p', {style: subtleStyle}, pending.name),
       connected !== undefined &&
         m('div', {style: clientRowStyle}, [
           m('div', [
@@ -215,6 +267,7 @@ class AgentBridgePage implements m.ClassComponent<{readonly app: App}> {
           ]),
           m(Button, {
             label: 'Revoke',
+            icon: 'link_off',
             intent: Intent.Danger,
             onclick: () => this.runCommand('agent_bridge_revoke_connected'),
           }),
@@ -229,23 +282,49 @@ class AgentBridgePage implements m.ClassComponent<{readonly app: App}> {
       return m(
         Section,
         {title: 'Connection Commands'},
-        m('p', {style: subtleStyle}, 'Enable Agent Bridge to generate commands.'),
+        m('p', {style: subtleStyle}, 'Bridge stopped.'),
       );
     }
     return m(
       Section,
       {title: 'Connection Commands'},
-      renderCommandBlock('Claude Code one-time', status?.claudeCommand),
-      renderCommandBlock('Codex one-time', status?.codexCommand),
+      this.copied !== undefined &&
+        m(Callout, {intent: Intent.Success}, `${this.copied} copied.`),
+      this.renderCommandBlock('Claude Code one-time', status?.claudeCommand),
+      this.renderCommandBlock('Codex one-time', status?.codexCommand),
     );
   }
 
-  private async refresh(): Promise<void> {
+  private renderCommandBlock(label: string, command?: string): m.Children {
+    if (command === undefined || command === null) return null;
+    return m('div', {style: {marginTop: '12px'}}, [
+      m('div', {style: commandHeaderStyle}, [
+        m('strong', label),
+        m(Button, {
+          label: 'Copy',
+          icon: 'content_copy',
+          onclick: () => this.copyCommand(label, command),
+        }),
+      ]),
+      m(CodeSnippet, {text: command, language: 'sh'}),
+    ]);
+  }
+
+  private async refresh(
+    options: {readonly autoStart?: boolean} = {},
+  ): Promise<void> {
     const seq = ++this.inflight;
     let next: AgentBridgeSnapshot | undefined;
     let nextError: string | undefined;
     try {
       next = await tauriInvoke<AgentBridgeSnapshot>('agent_bridge_status');
+      if (
+        options.autoStart === true &&
+        !this.manuallyStopped &&
+        next.status === 'Disabled'
+      ) {
+        next = await tauriInvoke<AgentBridgeSnapshot>('agent_bridge_enable');
+      }
     } catch (err) {
       nextError = err instanceof Error ? err.message : String(err);
     }
@@ -261,6 +340,21 @@ class AgentBridgePage implements m.ClassComponent<{readonly app: App}> {
     m.redraw();
   }
 
+  private async startBridge(): Promise<void> {
+    this.manuallyStopped = false;
+    await this.runCommand('agent_bridge_enable');
+  }
+
+  private async stopBridge(): Promise<void> {
+    this.manuallyStopped = true;
+    await this.runCommand('agent_bridge_disable');
+  }
+
+  private async regenerateSession(): Promise<void> {
+    this.manuallyStopped = false;
+    await this.runCommand('agent_bridge_regenerate_session');
+  }
+
   private async runCommand(command: string): Promise<void> {
     const seq = ++this.inflight;
     try {
@@ -268,8 +362,20 @@ class AgentBridgePage implements m.ClassComponent<{readonly app: App}> {
       if (seq !== this.inflight) return;
       this.status = next;
       this.error = undefined;
+      this.copied = undefined;
     } catch (err) {
       if (seq !== this.inflight) return;
+      this.error = err instanceof Error ? err.message : String(err);
+    }
+    m.redraw();
+  }
+
+  private async copyCommand(label: string, command: string): Promise<void> {
+    try {
+      await navigator.clipboard.writeText(command);
+      this.copied = label;
+      this.error = undefined;
+    } catch (err) {
       this.error = err instanceof Error ? err.message : String(err);
     }
     m.redraw();
@@ -289,6 +395,13 @@ const clientRowStyle = {
   alignItems: 'center',
 };
 
+const commandHeaderStyle = {
+  display: 'flex',
+  justifyContent: 'space-between',
+  gap: '12px',
+  alignItems: 'center',
+};
+
 const codeStyle = {
   overflowWrap: 'anywhere',
 };
@@ -301,14 +414,6 @@ function renderMeta(label: string, value: string): m.Children {
   return m('div', [
     m('div', {style: {color: 'var(--pf-color-text-muted)', fontSize: '12px'}}, label),
     m('div', {style: {fontWeight: '600', overflowWrap: 'anywhere'}}, value),
-  ]);
-}
-
-function renderCommandBlock(label: string, command?: string): m.Children {
-  if (command === undefined || command === null) return null;
-  return m('div', {style: {marginTop: '12px'}}, [
-    m('strong', label),
-    m(CodeSnippet, {text: command, language: 'sh'}),
   ]);
 }
 

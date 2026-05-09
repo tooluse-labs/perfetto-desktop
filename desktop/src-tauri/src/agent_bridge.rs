@@ -508,7 +508,7 @@ async fn handle_request_inner(
 
     Ok(match rpc.method.as_str() {
         "initialize" => initialize_response(rpc.id, rpc.params, &state, &request_session),
-        "tools/list" => tools_list_response(rpc.id, &state),
+        "tools/list" => tools_list_response(rpc.id),
         "tools/call" => tools_call_response(rpc.id, rpc.params, &state),
         method => json_rpc_error(
             rpc.id,
@@ -656,14 +656,10 @@ fn initialize_response(
     }))
 }
 
-fn tools_list_response(
-    id: Option<Value>,
-    state: &AgentBridgeState,
-) -> Response<ResponseBody> {
-    if let Some(error) = authorization_error(state) {
-        return json_rpc_error(id, -32002, &error);
-    }
-
+fn tools_list_response(id: Option<Value>) -> Response<ResponseBody> {
+    // `tools/list` is part of MCP startup for Codex/Claude. Header validation
+    // already proved possession of the session bearer, so expose schemas while
+    // Desktop authorization is pending; keep the real gate on `tools/call`.
     json_response(json!({
         "jsonrpc": "2.0",
         "id": id.unwrap_or(Value::Null),
