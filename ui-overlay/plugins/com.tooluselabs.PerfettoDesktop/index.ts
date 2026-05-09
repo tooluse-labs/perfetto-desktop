@@ -16,7 +16,7 @@ import {Intent} from '../../widgets/common';
 import {Icon} from '../../widgets/icon';
 import {Section} from '../../widgets/section';
 import QueryPagePlugin from '../dev.perfetto.QueryPage';
-import {AgentBridgeToolServer, handleNoTraceRpcRequest} from './bridge_tools';
+import {AgentBridgeToolServer} from './bridge_tools';
 import type {
   AgentBridgeRpcRequest,
   AgentBridgeRpcResponse,
@@ -811,13 +811,18 @@ export default class PerfettoDesktopPlugin implements PerfettoPlugin {
     fork-owned plugin is the extension point for desktop-only features such as
     local CLI agent access.
   `;
-  private static bridgeTools?: AgentBridgeToolServer;
+  private static bridgeToolsPromise?: Promise<AgentBridgeToolServer>;
+  private static currentTrace: Trace | null = null;
   private static traceContext?: AgentBridgeTraceContext;
   private static rpcPollTimer?: number;
   private static rpcRequestActive = false;
   private static bridgeStartPromise?: Promise<void>;
 
   static onActivate(app: App): void {
+    PerfettoDesktopPlugin.bridgeToolsPromise = AgentBridgeToolServer.create(
+      () => PerfettoDesktopPlugin.currentTrace,
+      () => (PerfettoDesktopPlugin.traceContext ?? null) as JsonValue,
+    );
     void PerfettoDesktopPlugin.ensureBridgeStarted();
     PerfettoDesktopPlugin.startRpcRequestPump();
     app.pages.registerPage({
@@ -849,12 +854,8 @@ export default class PerfettoDesktopPlugin implements PerfettoPlugin {
       cached: traceInfo.cached,
       downloadable: traceInfo.downloadable,
     };
+    PerfettoDesktopPlugin.currentTrace = _trace;
     PerfettoDesktopPlugin.traceContext = context;
-    await PerfettoDesktopPlugin.bridgeTools?.close();
-    PerfettoDesktopPlugin.bridgeTools = await AgentBridgeToolServer.create(
-      _trace,
-      () => (PerfettoDesktopPlugin.traceContext ?? null) as JsonValue,
-    );
     await tauriInvoke<AgentBridgeSnapshot>('agent_bridge_set_trace_context', {
       context,
     });
@@ -914,13 +915,16 @@ export default class PerfettoDesktopPlugin implements PerfettoPlugin {
   private static async handleRpcRequest(
     request: AgentBridgeRpcRequest,
   ): Promise<AgentBridgeRpcResponse> {
-    const bridgeTools = PerfettoDesktopPlugin.bridgeTools;
-    if (bridgeTools === undefined) {
-      return handleNoTraceRpcRequest(
-        request,
-        () => (PerfettoDesktopPlugin.traceContext ?? null) as JsonValue,
-      );
+    const promise = PerfettoDesktopPlugin.bridgeToolsPromise;
+    if (promise === undefined) {
+      return {
+        error: {
+          code: -32603,
+          message: 'Agent Bridge tool server is not initialized',
+        },
+      };
     }
+    const bridgeTools = await promise;
     return bridgeTools.handle(request);
   }
 }

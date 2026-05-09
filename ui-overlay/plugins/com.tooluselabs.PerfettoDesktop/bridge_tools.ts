@@ -10,15 +10,19 @@ import {Client} from '@modelcontextprotocol/sdk/client/index.js';
 import {InMemoryTransport} from '@modelcontextprotocol/sdk/inMemory.js';
 import {McpServer} from '@modelcontextprotocol/sdk/server/mcp.js';
 import {z} from 'zod';
+import {assertTrue} from '../../base/assert';
 import {sqliteString} from '../../base/string_utils';
+import {Time} from '../../base/time';
 import type {Trace} from '../../public/trace';
-import type {Engine} from '../../trace_processor/engine';
 import {runQueryForMcp} from '../com.google.PerfettoMcp/query';
-import {registerUiTools} from '../com.google.PerfettoMcp/uitools';
+import QueryPagePlugin from '../dev.perfetto.QueryPage';
 
 const SQL_ROW_CAP = 500;
 const SQL_BYTE_CAP = 1024 * 1024;
 const SQL_TIMEOUT_MS = 15_000;
+
+const NO_TRACE_HINT =
+  'No trace is loaded in Perfetto Desktop yet. Ask the user to load a trace, then retry this tool call.';
 
 export type JsonValue =
   | string
@@ -43,132 +47,20 @@ export interface AgentBridgeRpcResponse {
   };
 }
 
-const BRIDGE_TOOL_DEFINITIONS = [
-  {
-    name: 'perfetto-get-trace-info',
-    description:
-      'Return current Perfetto Desktop trace metadata and CLI Agent tool guidance.',
-    inputSchema: {
-      type: 'object',
-      properties: {reason: {type: 'string'}},
-      additionalProperties: false,
-    },
-  },
-  {
-    name: 'perfetto-execute-query',
-    description:
-      'Query the trace loaded in Perfetto Desktop using bounded PerfettoSQL.',
-    inputSchema: {
-      type: 'object',
-      properties: {query: {type: 'string'}},
-      required: ['query'],
-      additionalProperties: false,
-    },
-  },
-  {
-    name: 'perfetto-list-android-processes',
-    description: 'List process details from the current trace process table.',
-    inputSchema: {
-      type: 'object',
-      properties: {},
-      additionalProperties: false,
-    },
-  },
-  {
-    name: 'perfetto-list-interesting-tables',
-    description:
-      'List non-internal PerfettoSQL tables and views visible in sqlite_schema.',
-    inputSchema: {
-      type: 'object',
-      properties: {},
-      additionalProperties: false,
-    },
-  },
-  {
-    name: 'perfetto-list-macrobenchmark-slices',
-    description:
-      'List macrobenchmark measureBlock slices when present in the current trace.',
-    inputSchema: {
-      type: 'object',
-      properties: {},
-      additionalProperties: false,
-    },
-  },
-  {
-    name: 'perfetto-list-table-structure',
-    description: 'List the column structure for one PerfettoSQL table or view.',
-    inputSchema: {
-      type: 'object',
-      properties: {table: {type: 'string'}},
-      required: ['table'],
-      additionalProperties: false,
-    },
-  },
-  {
-    name: 'show-perfetto-sql-view',
-    description: 'Shows a SQL query in the Perfetto SQL view.',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        query: {type: 'string'},
-        viewName: {type: 'string'},
-      },
-      required: ['query', 'viewName'],
-      additionalProperties: false,
-    },
-  },
-  {
-    name: 'show-timeline',
-    description: 'Shows some context in the Perfetto Timeline view.',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        timeSpan: {
-          type: 'object',
-          properties: {
-            startTime: {type: 'string'},
-            endTime: {type: 'string'},
-          },
-          required: ['startTime', 'endTime'],
-          additionalProperties: false,
-        },
-        focus: {
-          type: 'object',
-          properties: {
-            table: {type: 'string'},
-            id: {type: 'number'},
-          },
-          required: ['table', 'id'],
-          additionalProperties: false,
-        },
-      },
-      additionalProperties: false,
-    },
-  },
-] as const;
-
-const BRIDGE_TOOL_NAMES: readonly string[] = BRIDGE_TOOL_DEFINITIONS.map(
-  (tool) => tool.name,
-);
-
-export function handleNoTraceRpcRequest(
-  request: AgentBridgeRpcRequest,
-  getTraceContext: () => JsonValue,
-): AgentBridgeRpcResponse {
-  switch (request.method) {
-    case 'tools/list':
-      return {result: {tools: BRIDGE_TOOL_DEFINITIONS}};
-    case 'tools/call':
-      return handleNoTraceToolCall(request.params, getTraceContext);
-    default:
-      return {
-        error: {
-          code: -32601,
-          message: `unsupported WebView MCP method: ${request.method}`,
-        },
-      };
-  }
-}
+// Single source of truth for the names exposed via tools/list. The actual
+// schemas come from the McpServer registrations below; this list only feeds
+// the `perfetto-get-trace-info` payload so the agent sees a stable surface
+// before and after a trace is loaded.
+const BRIDGE_TOOL_NAMES: readonly string[] = [
+  'perfetto-get-trace-info',
+  'perfetto-execute-query',
+  'perfetto-list-android-processes',
+  'perfetto-list-interesting-tables',
+  'perfetto-list-macrobenchmark-slices',
+  'perfetto-list-table-structure',
+  'show-perfetto-sql-view',
+  'show-timeline',
+];
 
 export class AgentBridgeToolServer {
   private constructor(
@@ -177,7 +69,7 @@ export class AgentBridgeToolServer {
   ) {}
 
   static async create(
-    trace: Trace,
+    getTrace: () => Trace | null,
     getTraceContext: () => JsonValue,
   ): Promise<AgentBridgeToolServer> {
     const mcpServer = new McpServer({
@@ -185,8 +77,8 @@ export class AgentBridgeToolServer {
       version: '1.0.0',
     });
 
-    registerBridgeTraceTools(mcpServer, trace.engine, getTraceContext);
-    registerUiTools(mcpServer, trace);
+    registerBridgeTraceTools(mcpServer, getTrace, getTraceContext);
+    registerBridgeUiTools(mcpServer, getTrace);
 
     const client = new Client({
       name: 'perfetto-desktop-bridge-client',
@@ -250,28 +142,23 @@ export class AgentBridgeToolServer {
 
 function registerBridgeTraceTools(
   server: McpServer,
-  engine: Engine,
+  getTrace: () => Trace | null,
   getTraceContext: () => JsonValue,
 ): void {
   server.tool(
     'perfetto-get-trace-info',
-    'Return current Perfetto Desktop trace metadata and Agent Bridge tool guidance.',
+    'Return current Perfetto Desktop trace metadata and CLI Agent tool guidance.',
     {reason: z.string().optional()},
-    async () => ({
-      content: [
-        {
-          type: 'text',
-          text: JSON.stringify(
-            {
-              trace: getTraceContext(),
-              implementedTools: BRIDGE_TOOL_NAMES,
-            },
-            null,
-            2,
-          ),
-        },
-      ],
-    }),
+    async () => {
+      const trace = getTrace();
+      const payload: Record<string, unknown> = {
+        trace: getTraceContext(),
+        traceLoaded: trace !== null,
+        implementedTools: BRIDGE_TOOL_NAMES,
+      };
+      if (trace === null) payload.note = NO_TRACE_HINT;
+      return toolText(JSON.stringify(payload, null, 2));
+    },
   );
 
   server.tool(
@@ -282,34 +169,43 @@ function registerBridgeTraceTools(
       applies row, byte, and timeout caps to protect the UI.
     `,
     {query: z.string()},
-    async ({query}) => toolText(await runBoundedQueryForMcp(engine, query)),
+    async ({query}) => {
+      const trace = getTrace();
+      if (trace === null) return toolText(NO_TRACE_HINT, true);
+      return toolText(await runBoundedQueryForMcp(trace.engine, query));
+    },
   );
 
   server.tool(
     'perfetto-list-android-processes',
     'List process details from the current trace process table.',
     {},
-    async () =>
-      toolText(
+    async () => {
+      const trace = getTrace();
+      if (trace === null) return toolText(NO_TRACE_HINT, true);
+      return toolText(
         await runBoundedQueryForMcp(
-          engine,
+          trace.engine,
           `
             SELECT *
             FROM process
             ORDER BY name
           `,
         ),
-      ),
+      );
+    },
   );
 
   server.tool(
     'perfetto-list-interesting-tables',
     'List non-internal PerfettoSQL tables and views visible in sqlite_schema.',
     {},
-    async () =>
-      toolText(
+    async () => {
+      const trace = getTrace();
+      if (trace === null) return toolText(NO_TRACE_HINT, true);
+      return toolText(
         await runBoundedQueryForMcp(
-          engine,
+          trace.engine,
           `
             SELECT name, type
             FROM sqlite_schema
@@ -319,17 +215,20 @@ function registerBridgeTraceTools(
             ORDER BY type, name
           `,
         ),
-      ),
+      );
+    },
   );
 
   server.tool(
     'perfetto-list-macrobenchmark-slices',
     'List macrobenchmark measureBlock slices when present in the current trace.',
     {},
-    async () =>
-      toolText(
+    async () => {
+      const trace = getTrace();
+      if (trace === null) return toolText(NO_TRACE_HINT, true);
+      return toolText(
         await runBoundedQueryForMcp(
-          engine,
+          trace.engine,
           `
             SELECT
               s.name AS slice_name,
@@ -345,61 +244,105 @@ function registerBridgeTraceTools(
             ORDER BY s.ts
           `,
         ),
-      ),
+      );
+    },
   );
 
   server.tool(
     'perfetto-list-table-structure',
     'List the column structure for one PerfettoSQL table or view.',
     {table: z.string()},
-    async ({table}) =>
-      toolText(
+    async ({table}) => {
+      const trace = getTrace();
+      if (trace === null) return toolText(NO_TRACE_HINT, true);
+      return toolText(
         await runBoundedQueryForMcp(
-          engine,
+          trace.engine,
           `SELECT * FROM pragma_table_info(${sqliteString(table)})`,
         ),
-      ),
+      );
+    },
   );
 }
 
-function handleNoTraceToolCall(
-  params: Record<string, unknown> | undefined,
-  getTraceContext: () => JsonValue,
-): AgentBridgeRpcResponse {
-  const name = params?.name;
-  if (typeof name !== 'string' || name.length === 0) {
-    return {result: toolText('tools/call requires a tool name', true)};
-  }
-  if (!BRIDGE_TOOL_NAMES.includes(name)) {
-    return {error: {code: -32601, message: `unknown tool: ${name}`}};
-  }
-  if (name === 'perfetto-get-trace-info') {
-    return {
-      result: toolText(
-        JSON.stringify(
-          {
-            trace: getTraceContext(),
-            traceLoaded: false,
-            implementedTools: BRIDGE_TOOL_NAMES,
-            note:
-              'No trace is loaded in Perfetto Desktop yet. Ask the user to load a trace, then call perfetto-get-trace-info again before analyzing trace data.',
-          },
-          null,
-          2,
-        ),
-      ),
-    };
-  }
-  return {
-    result: toolText(
-      'No trace is loaded in Perfetto Desktop yet. Ask the user to load a trace, then retry this tool call.',
-      true,
-    ),
-  };
+// Vendored from upstream com.google.PerfettoMcp/uitools.ts so handlers can
+// resolve the current Trace at call time. Keeping a single AgentBridgeToolServer
+// alive across trace load/unload requires the trace getter to be lazy — upstream
+// captures the Trace eagerly at registration, which would tear down and rebuild
+// the tools/list schema surface every time the loaded trace changed.
+function registerBridgeUiTools(
+  server: McpServer,
+  getTrace: () => Trace | null,
+): void {
+  server.tool(
+    'show-perfetto-sql-view',
+    'Shows a SQL query in the Perfetto SQL view.',
+    {
+      query: z.string(),
+      viewName: z.string(),
+    },
+    async ({query, viewName}) => {
+      const trace = getTrace();
+      if (trace === null) return toolText(NO_TRACE_HINT, true);
+      trace.plugins.getPlugin(QueryPagePlugin).addQueryResultsTab({
+        query,
+        title: viewName,
+      });
+      return {content: [{type: 'text', text: 'OK'}]};
+    },
+  );
+
+  server.tool(
+    'show-timeline',
+    `
+      Shows some context in the Timeline view.
+      'timeSpan' controls the range of time to be shown. For example { startTime: '261195375150266', endTime: '261197502806936' }
+      'focus' controls the row to be shown. For example { table: 'slice', id: 1234 }
+
+      Timestamps in Perfetto are bigints, and in most tables represent nanoseconds in 'trace processor time'.
+      These are device and trace specific, you can query the min/max of the slice table to get a valid range.
+    `,
+    {
+      timeSpan: z
+        .object({
+          startTime: z.string(),
+          endTime: z.string(),
+        })
+        .optional(),
+      focus: z
+        .object({
+          table: z.string(),
+          id: z.number(),
+        })
+        .optional(),
+    },
+    async ({timeSpan, focus}) => {
+      const trace = getTrace();
+      if (trace === null) return toolText(NO_TRACE_HINT, true);
+      if (timeSpan) {
+        const startTime = BigInt(timeSpan.startTime);
+        const endTime = BigInt(timeSpan.endTime);
+        assertTrue(startTime >= trace.traceInfo.start);
+        assertTrue(endTime <= trace.traceInfo.end);
+        trace.timeline.panSpanIntoView(
+          Time.fromRaw(startTime),
+          Time.fromRaw(endTime),
+          {align: 'zoom'},
+        );
+      }
+      if (focus) {
+        trace.selection.selectSqlEvent(focus.table, focus.id, {
+          scrollToSelection: true,
+          switchToCurrentSelectionTab: true,
+        });
+      }
+      return {content: [{type: 'text', text: 'OK'}]};
+    },
+  );
 }
 
 async function runBoundedQueryForMcp(
-  engine: Engine,
+  engine: import('../../trace_processor/engine').Engine,
   query: string,
 ): Promise<string> {
   const started = performance.now();
