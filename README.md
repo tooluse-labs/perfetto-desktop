@@ -41,9 +41,10 @@ applied at setup time.
 Release builds are produced by the GitHub Actions release workflow:
 
 - macOS arm64: unsigned DMG.
-- Windows installers are planned, but not published yet.
+- Windows x64: unsigned NSIS `.exe` and MSI `.msi` installers.
 
-The app is not yet code-signed. macOS Gatekeeper may warn on first launch.
+The app is not yet code-signed. macOS Gatekeeper and Windows SmartScreen may
+warn on first launch.
 
 ## Quick start
 
@@ -61,8 +62,9 @@ than `ui/run-dev-server` because the wrapper hardcodes
 `--only-wasm-memory64` and macOS WKWebView cannot load Memory64
 WASM. See `docs/design-docs/perfetto-desktop-architecture.md` §6.1.
 
-`scripts/bootstrap.sh` currently supports macOS only. Windows installer
-support is planned; local Windows bootstrap docs are still pending.
+`scripts/bootstrap.sh` currently supports macOS only. CI builds the Windows
+installer on `windows-latest` (Perfetto UI is prebuilt on Linux and consumed
+by the Windows packaging job); local Windows bootstrap docs are still pending.
 
 ## CLI Agent
 
@@ -134,7 +136,7 @@ ranges.
 | Chrome-specific analysis | General PerfettoSQL and UI-assisted investigation. | Dedicated Chrome tools for scroll jank, page load, startup, main-thread hotspots, and interactions. |
 | `trace_processor_shell` | Uses Perfetto UI's loaded trace engine in the desktop app. | Downloads and manages `trace_processor_shell` automatically, or uses `PERFETTO_TP_PATH`. |
 | Client setup | Copy per-session commands from the app; token rotates with the desktop session. | Installer can register Claude Code and Codex automatically; manual MCP config is also supported. |
-| Platform target | Desktop app releases: macOS arm64 today; Windows installers are planned. | Prebuilt binaries for Linux, macOS, and Windows. |
+| Platform target | Desktop app releases: macOS arm64 and Windows x64 installers. | Prebuilt binaries for Linux, macOS, and Windows. |
 | Batch/CI suitability | Not ideal; requires the desktop app and loaded UI trace. | Good fit for scripts, repeatable CLI workflows, and CI-style analysis. |
 | Security boundary | Local loopback server with bearer auth, host/origin checks, and single-instance desktop ownership. | stdio process boundary; access follows whatever file paths the MCP client asks it to load. |
 

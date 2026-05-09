@@ -70,15 +70,131 @@ jobs:
           path: desktop/src-tauri/target/release/bundle/dmg/*.dmg
           if-no-files-found: error
 
+  build-ui-linux:
+    name: Build Perfetto UI dist (Linux)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Cache Perfetto checkout
+        uses: actions/cache@v4
+        with:
+          path: third_party/perfetto
+          key: perfetto-checkout-${{ runner.os }}-${{ hashFiles('DEPS') }}
+
+      - name: Cache Perfetto UI build deps
+        uses: actions/cache@v4
+        with:
+          path: |
+            third_party/perfetto/buildtools
+            third_party/perfetto/.venv
+            third_party/perfetto/third_party/pnpm
+            third_party/perfetto/ui/node_modules
+          key: perfetto-builddeps-linux-${{ hashFiles('DEPS') }}
+
+      - name: Fetch Perfetto + UI build deps
+        run: ./scripts/setup.sh
+
+      - name: Build Perfetto UI dist
+        run: ./third_party/perfetto/ui/build
+
+      - name: Upload UI dist artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: perfetto-ui-dist
+          path: third_party/perfetto/ui/out/dist
+          if-no-files-found: error
+
+  build-windows-x64:
+    name: Build Windows x64 installers
+    runs-on: windows-latest
+    needs:
+      - build-ui-linux
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: desktop/pnpm-lock.yaml
+
+      - name: Cache Perfetto checkout
+        uses: actions/cache@v4
+        with:
+          path: third_party/perfetto
+          key: perfetto-checkout-${{ runner.os }}-${{ hashFiles('DEPS') }}
+
+      # Windows skips upstream `install-build-deps --ui` (rejected by the
+      # script) and consumes the prebuilt UI dist from build-ui-linux.
+      - name: Fetch Perfetto checkout (no UI deps)
+        shell: bash
+        run: bash ./scripts/setup.sh --no-ui-deps
+
+      - name: Download prebuilt Perfetto UI dist
+        uses: actions/download-artifact@v4
+        with:
+          name: perfetto-ui-dist
+          path: third_party/perfetto/ui/out/dist
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: desktop/src-tauri
+
+      - name: pnpm install
+        working-directory: desktop
+        run: pnpm install --frozen-lockfile
+
+      # `beforeBuildCommand` runs `./ui/build` (a bash script) on macOS
+      # builds; on Windows the UI dist is downloaded above instead. JSON
+      # Merge Patch (RFC 7396) treats `null` as field deletion, so Tauri
+      # ends up with no prebuild hook.
+      - name: pnpm tauri build
+        working-directory: desktop
+        shell: bash
+        run: pnpm tauri build --bundles nsis,msi -c '{"build":{"beforeBuildCommand":null}}'
+
+      - name: List build artifacts
+        shell: bash
+        run: |
+          echo "--- NSIS ---"
+          ls -lh desktop/src-tauri/target/release/bundle/nsis/ || true
+          echo "--- MSI ---"
+          ls -lh desktop/src-tauri/target/release/bundle/msi/ || true
+
+      - name: Upload Windows installer artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: perfetto-desktop-windows-x64
+          path: |
+            desktop/src-tauri/target/release/bundle/nsis/*.exe
+            desktop/src-tauri/target/release/bundle/msi/*.msi
+          if-no-files-found: error
+
   publish-release:
     name: Publish GitHub release
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     needs:
       - build-macos-arm64
+      - build-windows-x64
     permissions:
       # Required for softprops/action-gh-release to create the release
-      # and attach the DMG. Default GITHUB_TOKEN scope is read-only on
+      # and attach installers. Default GITHUB_TOKEN scope is read-only on
       # repos with "Restricted" workflow permissions.
       contents: write
     steps:
@@ -86,9 +202,12 @@ jobs:
         with:
           sparse-checkout: .github/release-notes
 
-      - name: Download build artifacts
+      - name: Download installer artifacts
         uses: actions/download-artifact@v4
         with:
+          # Skip perfetto-ui-dist (the 96MB intermediate that the Windows
+          # job consumes); only platform installers ship with the release.
+          pattern: perfetto-desktop-*
           path: dist/release
 
       - name: List release assets
@@ -109,7 +228,10 @@ jobs:
       - name: Create GitHub release
         uses: softprops/action-gh-release@v2
         with:
-          files: dist/release/**/*.dmg
+          files: |
+            dist/release/**/*.dmg
+            dist/release/**/*.exe
+            dist/release/**/*.msi
           body_path: ${{ steps.notes.outputs.path }}
           generate_release_notes: true
           fail_on_unmatched_files: true

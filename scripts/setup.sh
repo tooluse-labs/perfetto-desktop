@@ -1,7 +1,23 @@
 #!/usr/bin/env bash
 # Bootstrap third_party/perfetto/ at the SHA pinned in DEPS, then apply
 # any patches and overlay plugins.
+#
+# --no-ui-deps skips `install-build-deps --ui` for hosts that cannot run
+# the upstream UI build (e.g. Windows; upstream rejects `--ui` there).
+# Those hosts are expected to consume a prebuilt ui/out/dist from a
+# separate macOS or Linux job.
 set -euo pipefail
+
+UI_DEPS=1
+for arg in "$@"; do
+  case "$arg" in
+    --no-ui-deps) UI_DEPS=0 ;;
+    *)
+      echo "ERROR: unknown setup.sh argument: $arg" >&2
+      exit 1
+      ;;
+  esac
+done
 
 # Anchor on the script's own location, not git rev-parse, because the
 # Perfetto checkout under third_party/perfetto/ is itself a git repo —
@@ -38,8 +54,12 @@ fi
 ./scripts/apply-patches.sh
 ./scripts/sync-overlay.sh
 
-echo "==> Fetching Perfetto UI build deps (hermetic node, pnpm cache, buildtools)"
-(cd "$PERFETTO_DIR" && ./tools/install-build-deps --ui)
+if [[ $UI_DEPS -eq 1 ]]; then
+  echo "==> Fetching Perfetto UI build deps (hermetic node, pnpm cache, buildtools)"
+  (cd "$PERFETTO_DIR" && ./tools/install-build-deps --ui)
+else
+  echo "==> Skipping UI build deps (--no-ui-deps)"
+fi
 
 echo "==> Done. Build with:"
 echo "    (cd desktop && pnpm install && pnpm tauri dev)"
