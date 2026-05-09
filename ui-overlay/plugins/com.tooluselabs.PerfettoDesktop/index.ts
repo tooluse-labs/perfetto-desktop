@@ -922,7 +922,17 @@ export default class PerfettoDesktopPlugin implements PerfettoPlugin {
         },
       };
     }
-    const bridgeTools = await promise;
-    return bridgeTools.handle(request);
+    try {
+      const bridgeTools = await promise;
+      return bridgeTools.handle(request);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      return {
+        error: {
+          code: -32603,
+          message: `Agent Bridge tool server failed to initialize: ${message}`,
+        },
+      };
+    }
   }
 }

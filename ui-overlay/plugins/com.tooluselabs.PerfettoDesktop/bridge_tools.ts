@@ -270,6 +270,10 @@ function registerBridgeTraceTools(
 // alive across trace load/unload requires the trace getter to be lazy — upstream
 // captures the Trace eagerly at registration, which would tear down and rebuild
 // the tools/list schema surface every time the loaded trace changed.
+//
+// When bumping the pinned Perfetto SHA (scripts/update-perfetto.sh), diff this
+// against third_party/perfetto/ui/src/plugins/com.google.PerfettoMcp/uitools.ts
+// and port over any new tools or argument changes.
 function registerBridgeUiTools(
   server: McpServer,
   getTrace: () => Trace | null,
