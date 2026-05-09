@@ -11,6 +11,10 @@
   <a href="docs/design-docs/perfetto-desktop-architecture.md"><img alt="Status" src="https://img.shields.io/badge/status-CLI%20Agent%20preview-orange.svg"></a>
 </p>
 
+<p align="center">
+  English | <a href="README.zh-CN.md">简体中文</a>
+</p>
+
 ---
 
 A Tauri 2 desktop wrapper built by [Tooluse Labs](https://github.com/tooluse-labs).
