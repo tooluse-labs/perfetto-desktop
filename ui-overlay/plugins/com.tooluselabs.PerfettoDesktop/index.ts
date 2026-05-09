@@ -814,8 +814,7 @@ export default class PerfettoDesktopPlugin implements PerfettoPlugin {
   private static bridgeToolsPromise?: Promise<AgentBridgeToolServer>;
   private static currentTrace: Trace | null = null;
   private static traceContext?: AgentBridgeTraceContext;
-  private static rpcPollTimer?: number;
-  private static rpcRequestActive = false;
+  private static rpcPumpStarted = false;
   private static bridgeStartPromise?: Promise<void>;
 
   static onActivate(app: App): void {
@@ -883,32 +882,31 @@ export default class PerfettoDesktopPlugin implements PerfettoPlugin {
   }
 
   private static startRpcRequestPump(): void {
-    if (PerfettoDesktopPlugin.rpcPollTimer !== undefined) return;
-    PerfettoDesktopPlugin.rpcPollTimer = window.setInterval(() => {
-      void PerfettoDesktopPlugin.pollRpcRequest();
-    }, 250);
-    void PerfettoDesktopPlugin.pollRpcRequest();
+    if (PerfettoDesktopPlugin.rpcPumpStarted) return;
+    PerfettoDesktopPlugin.rpcPumpStarted = true;
+    void PerfettoDesktopPlugin.runRpcRequestPump();
   }
 
-  private static async pollRpcRequest(): Promise<void> {
-    if (PerfettoDesktopPlugin.rpcRequestActive) return;
-    PerfettoDesktopPlugin.rpcRequestActive = true;
-    try {
-      const request = await tauriInvoke<AgentBridgeRpcRequest | undefined>(
-        'agent_bridge_next_rpc_request',
-      );
-      if (request === undefined || request === null) return;
-      const response = await PerfettoDesktopPlugin.handleRpcRequest(request);
-      await tauriInvoke('agent_bridge_complete_rpc_request', {
-        requestId: request.requestId,
-        response,
-      });
-    } catch (err) {
-      // Keep the pump alive; the MCP side will time out if completion cannot be
-      // delivered.
-      console.warn('Perfetto Desktop Agent Bridge RPC pump failed', err);
-    } finally {
-      PerfettoDesktopPlugin.rpcRequestActive = false;
+  // The Tauri command long-polls (~25s) and resolves immediately when a new
+  // request lands, so this loop is the entire pump — no setInterval needed.
+  private static async runRpcRequestPump(): Promise<void> {
+    while (true) {
+      try {
+        const request = await tauriInvoke<AgentBridgeRpcRequest | null>(
+          'agent_bridge_next_rpc_request',
+        );
+        if (request === null || request === undefined) continue;
+        const response = await PerfettoDesktopPlugin.handleRpcRequest(request);
+        await tauriInvoke('agent_bridge_complete_rpc_request', {
+          requestId: request.requestId,
+          response,
+        });
+      } catch (err) {
+        // Keep the pump alive; the MCP side will time out if completion cannot
+        // be delivered. Back off briefly to avoid a tight error loop.
+        console.warn('Perfetto Desktop Agent Bridge RPC pump failed', err);
+        await new Promise((resolve) => window.setTimeout(resolve, 1000));
+      }
     }
   }
 

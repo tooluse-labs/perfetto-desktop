@@ -16,7 +16,7 @@ use serde_json::{json, Value};
 use subtle::ConstantTimeEq;
 use tauri::State;
 use tokio::net::TcpListener;
-use tokio::sync::{oneshot, watch};
+use tokio::sync::{oneshot, watch, Notify};
 use tokio::time::{timeout, Duration};
 use uuid::Uuid;
 
@@ -30,6 +30,10 @@ const TRACE_CONTEXT_RESOURCE_NAME: &str = "Current Perfetto trace";
 const MAX_BODY_BYTES: usize = 1024 * 1024;
 const MAX_PENDING_MCP_REQUESTS: usize = 8;
 const MCP_REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
+// Cap how long the WebView pump may park inside `agent_bridge_next_rpc_request`
+// before the command returns `None`. The pump immediately re-issues, so this
+// only bounds Tauri IPC churn (and gives runtime watchdogs a heartbeat).
+const RPC_LONG_POLL_TIMEOUT: Duration = Duration::from_secs(25);
 
 type ResponseBody = Full<Bytes>;
 
@@ -48,6 +52,7 @@ struct BridgeInner {
     trace_context: Option<TraceContext>,
     mcp_requests: VecDeque<AgentBridgeRpcRequest>,
     mcp_responders: HashMap<String, oneshot::Sender<AgentBridgeRpcResponse>>,
+    mcp_request_notify: Arc<Notify>,
     connection_revoker: Option<watch::Sender<()>>,
     shutdown: Option<oneshot::Sender<()>>,
     last_error: Option<String>,
@@ -428,9 +433,26 @@ pub fn agent_bridge_set_trace_context(
 }
 
 #[tauri::command]
-pub fn agent_bridge_next_rpc_request(
+pub async fn agent_bridge_next_rpc_request(
     state: State<'_, AgentBridgeState>,
 ) -> Result<Option<AgentBridgeRpcRequest>, String> {
+    let notify = {
+        let mut inner = state
+            .inner()
+            .inner
+            .lock()
+            .map_err(|_| "agent bridge state lock poisoned".to_string())?;
+        if let Some(request) = inner.mcp_requests.pop_front() {
+            return Ok(Some(request));
+        }
+        inner.mcp_request_notify.clone()
+    };
+
+    // Park until either a request lands or the long-poll bound elapses. The
+    // WebView pump will immediately re-issue on `None`, so the timeout is
+    // strictly an IPC-heartbeat ceiling, not a backoff.
+    let _ = timeout(RPC_LONG_POLL_TIMEOUT, notify.notified()).await;
+
     let mut inner = state
         .inner()
         .inner
@@ -917,7 +939,7 @@ async fn proxy_mcp_request(
     params: Option<Value>,
     state: &AgentBridgeState,
 ) -> Response<ResponseBody> {
-    let (request, receiver) = {
+    let (request, receiver, notify) = {
         let mut inner = match state.inner.lock() {
             Ok(inner) => inner,
             Err(_) => return json_rpc_error(id, -32603, "state lock poisoned"),
@@ -936,8 +958,9 @@ async fn proxy_mcp_request(
             .mcp_responders
             .insert(request.request_id.clone(), sender);
         inner.mcp_requests.push_back(request.clone());
-        (request, receiver)
+        (request, receiver, inner.mcp_request_notify.clone())
     };
+    notify.notify_one();
 
     let response = match timeout(MCP_REQUEST_TIMEOUT, receiver).await {
         Ok(Ok(response)) => response,
