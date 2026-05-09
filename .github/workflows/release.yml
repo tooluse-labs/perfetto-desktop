@@ -119,6 +119,13 @@ jobs:
     needs:
       - build-ui-linux
     steps:
+      # Git for Windows defaults to core.autocrlf=true, which would normalize
+      # the Perfetto checkout to CRLF and cause `git apply` in
+      # apply-patches.sh to reject the LF-encoded patches in patches/perfetto/.
+      - name: Disable Git autocrlf
+        shell: bash
+        run: git config --global core.autocrlf false
+
       - uses: actions/checkout@v4
 
       - uses: dtolnay/rust-toolchain@stable
