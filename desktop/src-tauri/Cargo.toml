@@ -24,5 +24,6 @@ subtle = "2"
 tauri = { version = "2", features = [] }
 tauri-plugin-dialog = "2"
 tauri-plugin-fs = "2"
-tokio = { version = "1", features = ["macros", "net", "sync"] }
+tauri-plugin-single-instance = "2"
+tokio = { version = "1", features = ["macros", "net", "sync", "time"] }
 uuid = { version = "1", features = ["v4", "serde"] }

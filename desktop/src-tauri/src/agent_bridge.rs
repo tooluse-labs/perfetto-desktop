@@ -1,3 +1,4 @@
+use std::collections::{HashMap, VecDeque};
 use std::convert::Infallible;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::sync::{Arc, Mutex};
@@ -15,15 +16,20 @@ use serde_json::{json, Value};
 use subtle::ConstantTimeEq;
 use tauri::State;
 use tokio::net::TcpListener;
-use tokio::sync::oneshot;
+use tokio::sync::{oneshot, watch};
+use tokio::time::{timeout, Duration};
 use uuid::Uuid;
 
 // TODO: thread DEFAULT_PORT through user settings before Phase D.
 const DEFAULT_PORT: u16 = 38471;
 const MCP_PATH: &str = "/mcp";
+const TRACE_CONTEXT_RESOURCE_URI: &str = "perfetto://desktop/current-trace";
+const TRACE_CONTEXT_RESOURCE_NAME: &str = "Current Perfetto trace";
 // 1 MiB cap on incoming MCP request bodies. JSON-RPC envelopes are far smaller;
 // query results stream out via response side, where Phase B SQL caps live.
 const MAX_BODY_BYTES: usize = 1024 * 1024;
+const MAX_PENDING_MCP_REQUESTS: usize = 8;
+const MCP_REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
 
 type ResponseBody = Full<Bytes>;
 
@@ -40,6 +46,9 @@ struct BridgeInner {
     pending_client: Option<ClientInfo>,
     connected_client: Option<ClientInfo>,
     trace_context: Option<TraceContext>,
+    mcp_requests: VecDeque<AgentBridgeRpcRequest>,
+    mcp_responders: HashMap<String, oneshot::Sender<AgentBridgeRpcResponse>>,
+    connection_revoker: Option<watch::Sender<()>>,
     shutdown: Option<oneshot::Sender<()>>,
     last_error: Option<String>,
     last_method: Option<String>,
@@ -136,6 +145,33 @@ pub struct AgentBridgeSnapshot {
     codex_command: Option<String>,
 }
 
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentBridgeRpcRequest {
+    request_id: String,
+    method: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    params: Option<Value>,
+}
+
+#[derive(Clone, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentBridgeRpcResponse {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    result: Option<Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    error: Option<JsonRpcErrorObject>,
+}
+
+#[derive(Clone, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct JsonRpcErrorObject {
+    code: i32,
+    message: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    data: Option<Value>,
+}
+
 #[derive(Deserialize)]
 struct JsonRpcRequest {
     id: Option<Value>,
@@ -153,7 +189,17 @@ pub fn commands() -> impl Fn(tauri::ipc::Invoke) -> bool {
         agent_bridge_revoke_connected,
         agent_bridge_regenerate_session,
         agent_bridge_set_trace_context,
+        agent_bridge_next_rpc_request,
+        agent_bridge_complete_rpc_request,
     ]
+}
+
+pub fn spawn_auto_start(state: AgentBridgeState) {
+    tauri::async_runtime::spawn(async move {
+        if let Err(err) = enable_bridge(state).await {
+            eprintln!("agent_bridge: auto-start failed: {err}");
+        }
+    });
 }
 
 #[tauri::command]
@@ -167,7 +213,11 @@ pub fn agent_bridge_status(
 pub async fn agent_bridge_enable(
     state: State<'_, AgentBridgeState>,
 ) -> Result<AgentBridgeSnapshot, String> {
-    let bridge = state.inner().inner.clone();
+    enable_bridge(state.inner().clone()).await
+}
+
+async fn enable_bridge(state: AgentBridgeState) -> Result<AgentBridgeSnapshot, String> {
+    let bridge = state.inner.clone();
 
     // Atomic claim: only proceed if currently Disabled. Concurrent Enables
     // serialize behind this lock; the loser gets the in-flight snapshot and
@@ -212,6 +262,7 @@ pub async fn agent_bridge_enable(
     };
     let session = Arc::new(SessionConfig::new(port));
     let (shutdown_tx, shutdown_rx) = oneshot::channel();
+    let (connection_revoker, connection_revocations) = watch::channel(());
 
     {
         let mut inner = bridge
@@ -233,13 +284,15 @@ pub async fn agent_bridge_enable(
         // default port) so the UI can hint at a port collision without flipping
         // the bridge to Error.
         inner.last_error = bind_warning;
+        inner.connection_revoker = Some(connection_revoker);
         inner.shutdown = Some(shutdown_tx);
     }
 
     tauri::async_runtime::spawn(run_http_edge(
         listener,
-        state.inner().clone(),
+        state.clone(),
         shutdown_rx,
+        connection_revocations,
     ));
 
     snapshot_from_bridge(&bridge)
@@ -257,6 +310,7 @@ pub fn agent_bridge_disable(
             .map_err(|_| "agent bridge state lock poisoned".to_string())?;
         let shutdown = inner.shutdown.take();
         let trace_context = inner.trace_context.clone();
+        revoke_active_connections(&mut inner, "bridge_disabled");
         *inner = BridgeInner::default();
         inner.trace_context = trace_context;
         shutdown
@@ -301,6 +355,8 @@ pub fn agent_bridge_deny_pending(
         if inner.mode == BridgeMode::PendingAuthorization {
             inner.mode = BridgeMode::Listening;
         }
+        rotate_session(&mut inner);
+        revoke_active_connections(&mut inner, "authorization_denied");
     }
     snapshot(&state)
 }
@@ -319,6 +375,8 @@ pub fn agent_bridge_revoke_connected(
         if inner.mode == BridgeMode::Connected {
             inner.mode = BridgeMode::Listening;
         }
+        rotate_session(&mut inner);
+        revoke_active_connections(&mut inner, "authorization_revoked");
     }
     snapshot(&state)
 }
@@ -348,6 +406,7 @@ pub fn agent_bridge_regenerate_session(
         inner.pending_client = None;
         inner.connected_client = None;
         inner.mode = BridgeMode::Listening;
+        revoke_active_connections(&mut inner, "session_regenerated");
     }
     snapshot(&state)
 }
@@ -368,13 +427,43 @@ pub fn agent_bridge_set_trace_context(
     snapshot(&state)
 }
 
+#[tauri::command]
+pub fn agent_bridge_next_rpc_request(
+    state: State<'_, AgentBridgeState>,
+) -> Result<Option<AgentBridgeRpcRequest>, String> {
+    let mut inner = state
+        .inner()
+        .inner
+        .lock()
+        .map_err(|_| "agent bridge state lock poisoned".to_string())?;
+    Ok(inner.mcp_requests.pop_front())
+}
+
+#[tauri::command]
+pub fn agent_bridge_complete_rpc_request(
+    state: State<'_, AgentBridgeState>,
+    request_id: String,
+    response: AgentBridgeRpcResponse,
+) -> Result<(), String> {
+    let responder = {
+        let mut inner = state
+            .inner()
+            .inner
+            .lock()
+            .map_err(|_| "agent bridge state lock poisoned".to_string())?;
+        inner.mcp_responders.remove(&request_id)
+    };
+    if let Some(responder) = responder {
+        let _ = responder.send(response);
+    }
+    Ok(())
+}
+
 fn snapshot(state: &State<'_, AgentBridgeState>) -> Result<AgentBridgeSnapshot, String> {
     snapshot_from_bridge(&state.inner().inner)
 }
 
-fn snapshot_from_bridge(
-    bridge: &Arc<Mutex<BridgeInner>>,
-) -> Result<AgentBridgeSnapshot, String> {
+fn snapshot_from_bridge(bridge: &Arc<Mutex<BridgeInner>>) -> Result<AgentBridgeSnapshot, String> {
     let inner = bridge
         .lock()
         .map_err(|_| "agent bridge state lock poisoned".to_string())?;
@@ -419,9 +508,7 @@ impl SessionConfig {
                 },
             },
         });
-        let claude_command = format!(
-            "claude --strict-mcp-config --mcp-config '{claude_json}'"
-        );
+        let claude_command = format!("claude --strict-mcp-config --mcp-config '{claude_json}'");
         let codex_command = format!(
             "PERFETTO_DESKTOP_MCP_TOKEN='{secret}' codex -c 'mcp_servers.perfetto_desktop.url=\"{endpoint}\"' -c 'mcp_servers.perfetto_desktop.bearer_token_env_var=\"PERFETTO_DESKTOP_MCP_TOKEN\"'"
         );
@@ -461,10 +548,46 @@ async fn bind_listener() -> Result<(TcpListener, bool, Option<String>), String> 
     }
 }
 
+fn rotate_session(inner: &mut BridgeInner) {
+    let Some(port) = inner.session.as_ref().map(|session| session.port) else {
+        return;
+    };
+    inner.session = Some(Arc::new(SessionConfig::new(port)));
+}
+
+fn revoke_active_connections(inner: &mut BridgeInner, reason: &str) {
+    if let Some(revoker) = &inner.connection_revoker {
+        let _ = revoker.send(());
+    }
+
+    inner.mcp_requests.clear();
+    let response = AgentBridgeRpcResponse {
+        result: None,
+        error: Some(JsonRpcErrorObject {
+            code: -32002,
+            message: reason.to_string(),
+            data: None,
+        }),
+    };
+    for (_, responder) in inner.mcp_responders.drain() {
+        let _ = responder.send(response.clone());
+    }
+}
+
+fn revocation_receiver_for_new_connection(receiver: &watch::Receiver<()>) -> watch::Receiver<()> {
+    let mut receiver = receiver.clone();
+    // A receiver cloned after a prior revoke can still observe that old value
+    // as "changed". Mark the current epoch as seen so a fresh connection is
+    // closed only by future revokes.
+    let _ = receiver.borrow_and_update();
+    receiver
+}
+
 async fn run_http_edge(
     listener: TcpListener,
     state: AgentBridgeState,
     mut shutdown_rx: oneshot::Receiver<()>,
+    connection_revocations: watch::Receiver<()>,
 ) {
     loop {
         tokio::select! {
@@ -478,20 +601,34 @@ async fn run_http_edge(
                     continue;
                 };
                 let state = state.clone();
+                let connection_revocations =
+                    revocation_receiver_for_new_connection(&connection_revocations);
                 tauri::async_runtime::spawn(async move {
                     let io = TokioIo::new(stream);
                     let service_state = state.clone();
                     let service = service_fn(move |request| {
                         handle_request(request, service_state.clone())
                     });
-                    if let Err(err) = http1::Builder::new()
-                        .serve_connection(io, service)
-                        .await
-                    {
-                        record_connection_error(
-                            &state,
-                            &format!("Agent Bridge HTTP error: {err}"),
-                        );
+                    let builder = http1::Builder::new();
+                    let connection = builder.serve_connection(io, service);
+                    let mut connection_revocations = connection_revocations;
+                    tokio::select! {
+                        result = connection => {
+                            if let Err(err) = result {
+                                record_connection_error(
+                                    &state,
+                                    &format!("Agent Bridge HTTP error: {err}"),
+                                );
+                            }
+                        }
+                        changed = connection_revocations.changed() => {
+                            if changed.is_err() {
+                                record_connection_error(
+                                    &state,
+                                    "Agent Bridge connection revocation channel closed",
+                                );
+                            }
+                        }
                     }
                 });
             }
@@ -517,7 +654,10 @@ async fn handle_request_inner(
     // Phase B wave 2 will use it to push `notifications/tools/list_changed`
     // when the user toggles tier. For now any non-POST method 404s.
     if request.method() != Method::POST || request.uri().path() != MCP_PATH {
-        return Err((StatusCode::NOT_FOUND, "unknown Agent Bridge endpoint".to_string()));
+        return Err((
+            StatusCode::NOT_FOUND,
+            "unknown Agent Bridge endpoint".to_string(),
+        ));
     }
     let request_session = validate_http_headers(request.headers(), &state)?;
 
@@ -535,8 +675,12 @@ async fn handle_request_inner(
             )
         })?
         .to_bytes();
-    let rpc: JsonRpcRequest = serde_json::from_slice(&bytes)
-        .map_err(|err| (StatusCode::BAD_REQUEST, format!("invalid JSON-RPC request: {err}")))?;
+    let rpc: JsonRpcRequest = serde_json::from_slice(&bytes).map_err(|err| {
+        (
+            StatusCode::BAD_REQUEST,
+            format!("invalid JSON-RPC request: {err}"),
+        )
+    })?;
     set_last_method(&state, &rpc.method);
 
     if rpc.id.is_none() {
@@ -545,13 +689,11 @@ async fn handle_request_inner(
 
     Ok(match rpc.method.as_str() {
         "initialize" => initialize_response(rpc.id, rpc.params, &state, &request_session),
-        "tools/list" => tools_list_response(rpc.id),
-        "tools/call" => tools_call_response(rpc.id, rpc.params, &state),
-        method => json_rpc_error(
-            rpc.id,
-            -32601,
-            &format!("unsupported MCP method: {method}"),
-        ),
+        "resources/list" => resources_list_response(rpc.id),
+        "resources/read" => resources_read_response(rpc.id, rpc.params, &state),
+        "tools/list" => proxy_mcp_request(rpc.id, rpc.method, rpc.params, &state).await,
+        "tools/call" => tools_call_response(rpc.id, rpc.params, &state).await,
+        method => json_rpc_error(rpc.id, -32601, &format!("unsupported MCP method: {method}")),
     })
 }
 
@@ -562,14 +704,16 @@ fn validate_http_headers(
     // Brief lock to bump the Arc refcount, then drop. Header checks below run
     // lock-free against the immutable SessionConfig.
     let session = {
-        let inner = state
-            .inner
-            .lock()
-            .map_err(|_| (StatusCode::INTERNAL_SERVER_ERROR, "state lock poisoned".to_string()))?;
-        inner
-            .session
-            .clone()
-            .ok_or((StatusCode::SERVICE_UNAVAILABLE, "Agent Bridge is disabled".to_string()))?
+        let inner = state.inner.lock().map_err(|_| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "state lock poisoned".to_string(),
+            )
+        })?;
+        inner.session.clone().ok_or((
+            StatusCode::SERVICE_UNAVAILABLE,
+            "Agent Bridge is disabled".to_string(),
+        ))?
     };
 
     let host = headers
@@ -577,12 +721,18 @@ fn validate_http_headers(
         .and_then(|value| value.to_str().ok())
         .unwrap_or_default();
     if !session.allowed_hosts.iter().any(|allowed| allowed == host) {
-        return Err((StatusCode::FORBIDDEN, "Host header is not allowed".to_string()));
+        return Err((
+            StatusCode::FORBIDDEN,
+            "Host header is not allowed".to_string(),
+        ));
     }
 
     if let Some(origin) = headers.get(ORIGIN).and_then(|value| value.to_str().ok()) {
         if origin.starts_with("http://") || origin.starts_with("https://") {
-            return Err((StatusCode::FORBIDDEN, "browser Origin is not allowed".to_string()));
+            return Err((
+                StatusCode::FORBIDDEN,
+                "browser Origin is not allowed".to_string(),
+            ));
         }
     }
 
@@ -591,7 +741,10 @@ fn validate_http_headers(
         .and_then(|value| value.to_str().ok())
     {
         if fetch_site.eq_ignore_ascii_case("cross-site") {
-            return Err((StatusCode::FORBIDDEN, "cross-site fetch is not allowed".to_string()));
+            return Err((
+                StatusCode::FORBIDDEN,
+                "cross-site fetch is not allowed".to_string(),
+            ));
         }
     }
 
@@ -607,7 +760,10 @@ fn validate_http_headers(
         .unwrap_u8()
         != 1
     {
-        return Err((StatusCode::UNAUTHORIZED, "missing or invalid bearer token".to_string()));
+        return Err((
+            StatusCode::UNAUTHORIZED,
+            "missing or invalid bearer token".to_string(),
+        ));
     }
 
     Ok(session)
@@ -661,6 +817,11 @@ fn initialize_response(
         inner.connected_client = Some(client);
         inner.mode = BridgeMode::Connected;
     }
+    let context = match bridge_context_payload(state) {
+        Ok(context) => context,
+        Err(err) => return json_rpc_error(id, -32603, &err),
+    };
+    let instructions = bridge_instructions(&context);
 
     json_response(json!({
         "jsonrpc": "2.0",
@@ -668,6 +829,9 @@ fn initialize_response(
         "result": {
             "protocolVersion": "2024-11-05",
             "capabilities": {
+                "resources": {
+                    "listChanged": true,
+                },
                 "tools": {
                     "listChanged": true,
                 },
@@ -676,93 +840,189 @@ fn initialize_response(
                 "name": "perfetto-desktop",
                 "version": env!("CARGO_PKG_VERSION"),
             },
+            "instructions": instructions,
         },
     }))
 }
 
-fn tools_list_response(id: Option<Value>) -> Response<ResponseBody> {
-    // `tools/list` is part of MCP startup for Codex/Claude. Header validation
-    // already proved possession of the session bearer, so expose schemas while
-    // Desktop authorization is pending; keep the real gate on `tools/call`.
+fn resources_list_response(id: Option<Value>) -> Response<ResponseBody> {
     json_response(json!({
         "jsonrpc": "2.0",
         "id": id.unwrap_or(Value::Null),
         "result": {
-            "tools": [
+            "resources": [
                 {
-                    "name": "perfetto-get-trace-info",
-                    "description": "Return current Perfetto Desktop Agent Bridge and trace context metadata.",
-                    "inputSchema": {
-                        "type": "object",
-                        "properties": {},
-                        "additionalProperties": false,
-                    },
+                    "uri": TRACE_CONTEXT_RESOURCE_URI,
+                    "name": TRACE_CONTEXT_RESOURCE_NAME,
+                    "description": "Current Perfetto Desktop trace metadata and Agent Bridge status.",
+                    "mimeType": "application/json",
                 },
             ],
         },
     }))
 }
 
-fn tools_call_response(
+fn resources_read_response(
+    id: Option<Value>,
+    params: Option<Value>,
+    state: &AgentBridgeState,
+) -> Response<ResponseBody> {
+    let uri = params
+        .as_ref()
+        .and_then(|params| params.get("uri"))
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    if uri != TRACE_CONTEXT_RESOURCE_URI {
+        return json_rpc_error(id, -32602, "unknown Perfetto Desktop resource");
+    }
+
+    let context = match bridge_context_payload(state) {
+        Ok(context) => context,
+        Err(err) => return json_rpc_error(id, -32603, &err),
+    };
+    let text = serde_json::to_string_pretty(&context).unwrap_or_else(|_| "{}".to_string());
+    json_response(json!({
+        "jsonrpc": "2.0",
+        "id": id.unwrap_or(Value::Null),
+        "result": {
+            "contents": [
+                {
+                    "uri": TRACE_CONTEXT_RESOURCE_URI,
+                    "mimeType": "application/json",
+                    "text": text,
+                },
+            ],
+        },
+    }))
+}
+
+async fn tools_call_response(
     id: Option<Value>,
     params: Option<Value>,
     state: &AgentBridgeState,
 ) -> Response<ResponseBody> {
     if let Some(error) = authorization_error(state) {
         if error == "pending_authorization" {
-            return tool_text_response(
-                id,
-                "Desktop authorization is pending. Ask the user to click Allow in Perfetto Desktop, then retry this tool call.",
-            );
+            return json_rpc_error(id, -32002, "pending_authorization");
         }
         return json_rpc_error(id, -32002, &error);
     }
 
-    let tool_name = params
-        .as_ref()
-        .and_then(|params| params.get("name"))
-        .and_then(Value::as_str)
-        .unwrap_or_default();
-    if tool_name != "perfetto-get-trace-info" {
-        return json_rpc_error(id, -32601, "tool is not implemented in this skeleton");
-    }
-
-    let snapshot = match snapshot_from_bridge(&state.inner) {
-        Ok(snapshot) => snapshot,
-        Err(err) => return json_rpc_error(id, -32603, &err),
-    };
-    let trace_context = state
-        .inner
-        .lock()
-        .ok()
-        .and_then(|inner| inner.trace_context.clone());
-    let text = serde_json::to_string_pretty(&json!({
-        "bridgeStatus": snapshot.status,
-        "endpoint": snapshot.endpoint,
-        "sessionId": snapshot.session_id,
-        "client": snapshot.connected_client,
-        "trace": trace_context,
-        "implementedTools": ["perfetto-get-trace-info"],
-        "note": "This wave exposes trace metadata only. SQL and UI-driving tools will be implemented in the next Phase B wave.",
-    }))
-    .unwrap_or_else(|_| "{}".to_string());
-
-    tool_text_response(id, &text)
+    proxy_mcp_request(id, "tools/call".to_string(), params, state).await
 }
 
-fn tool_text_response(id: Option<Value>, text: &str) -> Response<ResponseBody> {
+async fn proxy_mcp_request(
+    id: Option<Value>,
+    method: String,
+    params: Option<Value>,
+    state: &AgentBridgeState,
+) -> Response<ResponseBody> {
+    let (request, receiver) = {
+        let mut inner = match state.inner.lock() {
+            Ok(inner) => inner,
+            Err(_) => return json_rpc_error(id, -32603, "state lock poisoned"),
+        };
+        if inner.mcp_responders.len() >= MAX_PENDING_MCP_REQUESTS {
+            return json_rpc_error(id, -32004, "too many pending Agent Bridge MCP requests");
+        }
+
+        let request = AgentBridgeRpcRequest {
+            request_id: Uuid::new_v4().to_string(),
+            method,
+            params,
+        };
+        let (sender, receiver) = oneshot::channel();
+        inner
+            .mcp_responders
+            .insert(request.request_id.clone(), sender);
+        inner.mcp_requests.push_back(request.clone());
+        (request, receiver)
+    };
+
+    let response = match timeout(MCP_REQUEST_TIMEOUT, receiver).await {
+        Ok(Ok(response)) => response,
+        Ok(Err(_)) => {
+            return json_rpc_error(
+                id,
+                -32003,
+                "Perfetto Desktop closed the MCP request before it completed",
+            );
+        }
+        Err(_) => {
+            if let Ok(mut inner) = state.inner.lock() {
+                inner.mcp_responders.remove(&request.request_id);
+                inner
+                    .mcp_requests
+                    .retain(|queued| queued.request_id != request.request_id);
+            }
+            return json_rpc_error(
+                id,
+                -32003,
+                "Timed out waiting for Perfetto Desktop WebView to handle the MCP request",
+            );
+        }
+    };
+
+    if let Some(error) = response.error {
+        return json_response(json!({
+            "jsonrpc": "2.0",
+            "id": id.unwrap_or(Value::Null),
+            "error": error,
+        }));
+    }
     json_response(json!({
         "jsonrpc": "2.0",
         "id": id.unwrap_or(Value::Null),
-        "result": {
-            "content": [
-                {
-                    "type": "text",
-                    "text": text,
-                },
-            ],
-        },
+        "result": response.result.unwrap_or_else(|| json!({})),
     }))
+}
+
+fn bridge_context_payload(state: &AgentBridgeState) -> Result<Value, String> {
+    let inner = state
+        .inner
+        .lock()
+        .map_err(|_| "agent bridge state lock poisoned".to_string())?;
+    let session = inner.session.as_deref();
+    Ok(json!({
+        "bridgeStatus": inner.mode.as_str(),
+        "endpoint": session.map(|session| session.endpoint.as_str()),
+        "sessionId": session.map(|session| session.session_id.as_str()),
+        "client": inner.connected_client.as_ref(),
+        "trace": inner.trace_context.as_ref(),
+        "implementedTools": [
+            "perfetto-get-trace-info",
+            "perfetto-execute-query",
+            "perfetto-list-interesting-tables",
+            "perfetto-list-table-structure",
+            "show-perfetto-sql-view",
+            "show-timeline",
+        ],
+        "availableResources": [
+            {
+                "uri": TRACE_CONTEXT_RESOURCE_URI,
+                "name": TRACE_CONTEXT_RESOURCE_NAME,
+                "mimeType": "application/json",
+            },
+        ],
+        "note": "Agent Bridge reuses upstream Perfetto MCP tool names where available. Tool implementations run in the WebView against the currently loaded trace.",
+    }))
+}
+
+fn bridge_instructions(context: &Value) -> String {
+    let trace = context
+        .get("trace")
+        .and_then(|trace| if trace.is_null() { None } else { Some(trace) });
+    let trace_summary = match trace {
+        Some(trace) => serde_json::to_string_pretty(trace).unwrap_or_else(|_| "{}".to_string()),
+        None => "No trace is currently loaded in Perfetto Desktop.".to_string(),
+    };
+    format!(
+        "You are connected to Perfetto Desktop through the local Agent Bridge.\n\
+Current Perfetto trace context:\n{trace_summary}\n\
+Use perfetto-get-trace-info to refresh metadata. Use perfetto-execute-query for bounded \
+PerfettoSQL SELECT/WITH queries against the loaded trace before making trace-analysis claims. \
+Use show-perfetto-sql-view and show-timeline when the user asks you to change Perfetto Desktop UI state."
+    )
 }
 
 fn authorization_error(state: &AgentBridgeState) -> Option<String> {
@@ -793,7 +1053,9 @@ fn json_response(value: Value) -> Response<ResponseBody> {
         .status(StatusCode::OK)
         .header("content-type", "application/json")
         .body(Full::new(Bytes::from(value.to_string())))
-        .unwrap_or_else(|_| plain_response(StatusCode::INTERNAL_SERVER_ERROR, "response build error"))
+        .unwrap_or_else(|_| {
+            plain_response(StatusCode::INTERNAL_SERVER_ERROR, "response build error")
+        })
 }
 
 fn plain_response(status: StatusCode, message: &str) -> Response<ResponseBody> {
@@ -807,6 +1069,8 @@ fn plain_response(status: StatusCode, message: &str) -> Response<ResponseBody> {
 fn empty_response(status: StatusCode) -> Response<ResponseBody> {
     Response::builder()
         .status(status)
+        .header("content-type", "application/json")
+        .header("content-length", "0")
         .body(Full::new(Bytes::new()))
         .unwrap_or_else(|_| Response::new(Full::new(Bytes::new())))
 }
@@ -830,5 +1094,24 @@ fn record_connection_error(state: &AgentBridgeState, error: &str) {
     eprintln!("agent_bridge: {error}");
     if let Ok(mut inner) = state.inner.lock() {
         inner.last_error = Some(error.to_string());
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn new_connection_receiver_ignores_prior_revocation_epoch() {
+        let (sender, receiver) = watch::channel(());
+        sender.send(()).expect("send prior revoke");
+
+        let mut connection_receiver = revocation_receiver_for_new_connection(&receiver);
+        let prior = timeout(Duration::from_millis(10), connection_receiver.changed()).await;
+        assert!(prior.is_err(), "old revoke must not close a new connection");
+
+        sender.send(()).expect("send future revoke");
+        let future = timeout(Duration::from_millis(100), connection_receiver.changed()).await;
+        assert!(future.is_ok(), "future revoke must close the connection");
     }
 }

@@ -17,34 +17,29 @@ Code 等外部 agent 使用用户已有订阅来分析 trace 和驱动 Perfetto 
 ## 2. 与 upstream PerfettoMcp 的关系
 
 `com.google.PerfettoMcp` 继续作为 upstream Gemini **AI Chat** 入口存在。Phase B
-期间 sidebar 可以同时出现 upstream **AI Chat** 和 fork-owned **Agent Bridge**；
+期间 sidebar 可以同时出现 upstream **AI Chat** 和 fork-owned **CLI Agent**；
 Phase D 再评估是否合并信息架构。
 
-Agent Bridge 不直接复用 upstream `registerTraceTools()` / `registerUiTools()` 的
-`McpServer` 实例。原因：
+Agent Bridge 复用 upstream Perfetto MCP 的工具语义和工具名，但不复用它的
+in-memory Gemini transport。fork-owned bridge 负责外部 HTTP MCP transport、Bearer
+认证、连接生命周期、capability gating、query cap 和 audit log；WebView 内部注册一个
+fork-owned `McpServer`，并尽量调用 upstream 的共享实现，例如
+`runQueryForMcp(...)`、`trace.timeline.panSpanIntoView(...)`、
+`trace.selection.selectSqlEvent(...)`。
 
-- Agent Bridge 需要 HTTP transport、连接授权、capability gating 和 audit log。
-- SQL tool 需要执行前限制、timeout、字节预算和结构化 truncation metadata。
-- 外部 agent 的 tool 命名和返回 schema 需要保持长期稳定，不应被 upstream 内部实现
-  直接牵动。
+工具名直接对齐 upstream，避免 fork 维护一套平行命名：
 
-实现上可以复用 upstream 的 public Perfetto API 用法，例如
-`trace.timeline.panSpanIntoView(...)` 和 `trace.selection.selectSqlEvent(...)`。
-但 fork 维护自己的 tool registry，并在文档中列出与 upstream 工具的映射。
-
-工具命名统一使用 MCP 社区常见的 kebab-case，并加 `perfetto-` 前缀，避免与其他
-MCP server 冲突：
-
-| Agent Bridge tool | 对应 upstream tool | 说明 |
+| Agent Bridge tool | 来源 | 说明 |
 | --- | --- | --- |
-| `perfetto-get-trace-info` | 无 | 当前 trace metadata 和能力 |
-| `perfetto-list-tables` | `perfetto-list-interesting-tables` | 表/视图列表 |
-| `perfetto-describe-table` | `perfetto-list-table-structure` | 表结构 |
-| `perfetto-query-sql` | `perfetto-execute-query` | 受限 SQL 查询 |
-| `perfetto-show-sql-view` | `show-perfetto-sql-view` | 打开 Query Page tab |
-| `perfetto-show-timeline` | `show-timeline` | timeline pan/zoom |
-| `perfetto-select-event` | `show-timeline` 的 `focus` 参数 | 选择 SQL event |
-| `perfetto-get-current-selection` | 无 | 读取当前 selection |
+| `perfetto-get-trace-info` | bridge 自有 | 当前 trace metadata 和能力 |
+| `perfetto-execute-query` | upstream 同名 | 受限 PerfettoSQL 查询 |
+| `perfetto-list-android-processes` | upstream 同名 | process 表摘要 |
+| `perfetto-list-interesting-tables` | upstream 同名 | 表/视图列表 |
+| `perfetto-list-macrobenchmark-slices` | upstream 同名 | macrobenchmark slice |
+| `perfetto-list-table-structure` | upstream 同名 | 表结构 |
+| `show-perfetto-sql-view` | upstream 同名 | 打开 Query Page tab |
+| `show-timeline` | upstream 同名 | timeline pan/zoom 和可选 SQL event focus |
+| `perfetto-get-current-selection` | bridge 自有 | 读取当前 selection，Phase C+ |
 
 ## 3. 目标与非目标
 
@@ -102,7 +97,7 @@ server 进程；本方案中 server 已经由 GUI app 启动，所以外部 agen
 
 1. 用户打开 Perfetto Desktop。
 2. 用户加载 trace。
-3. 用户打开 `Agent Bridge` 面板并点击 `Enable`。
+3. 用户打开 `CLI Agent` 面板并点击 `Enable`。
 4. Desktop 绑定 `127.0.0.1` 端口。
    - MVP 优先使用固定默认端口 `38471`，降低 MCP host 配置成本。
    - 如果固定端口冲突，Desktop 回退到 OS-assigned ephemeral port，并只显示
@@ -127,6 +122,12 @@ server 进程；本方案中 server 已经由 GUI app 启动，所以外部 agen
    - `Drive UI`: 允许打开 SQL view、跳转 timeline、选中 event。
 9. 连接断开、trace unload 或用户点击 `Disable` 后，当前授权失效。
 
+允许用户先启动 Codex/Claude Code，再在 Perfetto Desktop 中加载 trace。此时
+`initialize.instructions` 只能描述“尚未加载 trace”，但 `tools/list` 必须仍然成功并暴露
+稳定工具集合。trace 相关工具在无 trace 时返回结构化 tool error；trace 加载后，同一连接
+调用 `perfetto-get-trace-info` 或任意 trace tool 时必须读取最新 WebView trace context。
+MCP server 不能假设 host 会在 trace 加载后重新执行 `initialize`。
+
 连接命令只作为 UI 输出。最终命令格式以对应 CLI 的当前 MCP 配置语法为准，Desktop
 实现时需要根据 Codex/Claude Code 的官方文档更新模板。当前设计假设：
 
@@ -148,8 +149,9 @@ Phase B 不在 UI 中提供持久配置按钮。bearer 每会话刷新，没有 
 capability 授权控制。
 
 Phase B 默认只提供复制命令，不自动调起 shell 或启动 `claude` / `codex` 进程。
-`Open Terminal + Copy Command` 可以作为 Phase C/D 的 QoL 候选，但必须默认不自动执行
-命令；若未来支持自动执行，需要二次确认并明确提示 session secret 和 shell history 风险。
+Phase C 增加 `Open in Terminal` 作为 QoL：Desktop 打开系统终端并预填或复制当前
+one-time command，但默认不自动执行，用户需要自己按 Enter。若未来支持自动执行，
+必须二次确认并明确提示 session secret、shell history 和外部 CLI 权限风险。
 
 ### 5.2 状态机
 
@@ -217,8 +219,8 @@ Rust 在连接接受时生成 `connectionId`，在 MCP `initialize` 完成时生
   不排队，避免用户点击 Allow 后释放积压调用。
 - Rust 注入 `clientId`、`connectionId` 和当前 capability tier 到 WebView envelope；
   WebView 不接受来自 client 参数中的身份字段。
-- `revoke` 后当前连接立即失效；同一 session 内复用旧 `clientId` 的请求拒绝。新的连接
-  必须重新进入 `Pending Authorization`。
+- `revoke` 后当前连接立即失效，Rust 主动断开现有 HTTP keep-alive 连接并 rotate
+  session secret。旧 bearer 不能自动重连；用户必须复制新的连接命令。
 
 ### 6.3 Capability 分层
 
@@ -244,7 +246,7 @@ agent 继续调用已被撤销的 tool，server 返回 `capability_revoked` 结�
 所有 SQL 工具必须在执行层做限制，而不是只在结果迭代时截断。PerfettoSQL 支持多语句
 和 side-effect statement，不能盲目把整段 SQL 包成 `SELECT * FROM (...) LIMIT N`。
 
-`perfetto-query-sql` 使用多层防御：
+`perfetto-execute-query` 使用多层防御：
 
 1. 将输入切分为 statement 列表。
 2. 允许 `INCLUDE PERFETTO MODULE ...` 等非 row statement，但记录在 audit log。
@@ -275,43 +277,47 @@ URL scheme 不属于 Phase B MVP。后续如果实现 `perfetto-desktop://...` i
 
 - `perfetto-get-trace-info`
   - 返回 trace start/end、duration、loaded trace name、当前 capability、bridge 状态。
-- `perfetto-list-tables`
+- `perfetto-list-interesting-tables`
   - 查询 `sqlite_schema`，排除 `sqlite_%` 和内部表。
-- `perfetto-describe-table`
-  - 对指定表执行 `pragma table_info(...)`。
-- `perfetto-query-sql`
+- `perfetto-list-table-structure`
+  - 对指定表执行受限表结构查询。
+- `perfetto-list-android-processes`
+  - 查询 `process` 表，辅助 Android trace 初筛。
+- `perfetto-list-macrobenchmark-slices`
+  - 查询 `measureBlock` slice，辅助 benchmark trace 初筛。
+- `perfetto-execute-query`
   - 执行受限 PerfettoSQL。
   - 返回 JSON rows、column names、truncated metadata、elapsed time、byte count。
 
 ### 7.2 UI tools
 
-- `perfetto-show-sql-view`
+- `show-perfetto-sql-view`
   - 参数：`query`, `title`。
   - 调用 Query Page 插件打开一个结果 tab。
-- `perfetto-show-timeline`
-  - 参数：`start_time`, `end_time`。
-  - 调用 `trace.timeline.panSpanIntoView(...)`。
-- `perfetto-select-event`
-  - 参数：`table`, `id`。
-  - 调用 `trace.selection.selectSqlEvent(...)`。
+- `show-timeline`
+  - 参数：`timeSpan`, `focus`。
+  - 调用 `trace.timeline.panSpanIntoView(...)`，并可通过 `focus` 选择 SQL event。
 - `perfetto-get-current-selection`
   - 无 selection 时返回 `{kind: "none"}`，不返回错误。
 
-第一版优先实现 `perfetto-get-trace-info`、`perfetto-list-tables`、
-`perfetto-describe-table`、`perfetto-query-sql`、`perfetto-show-sql-view`、
-`perfetto-show-timeline`。`perfetto-select-event` 在 `Drive UI` 权限确认流程完成后再打开。
+第一版优先实现 `perfetto-get-trace-info`、`perfetto-list-interesting-tables`、
+`perfetto-list-table-structure`、`perfetto-execute-query`、
+`show-perfetto-sql-view`、`show-timeline`。`perfetto-get-current-selection`
+在 `Drive UI` 权限确认流程完成后再打开。
 
 ## 8. Desktop UI 设计
 
 新增一个轻量入口，建议在 `com.tooluselabs.PerfettoDesktop` 插件中注册页面：
 
-- Sidebar: `Agent Bridge`
+- Sidebar: `CLI Agent`
 - 状态：`Disabled` / `Starting` / `Listening` / `Pending Authorization` / `Connected` / `Error`
 - 操作：
   - `Enable`
   - `Disable`
   - `Copy One-Time Codex Command`
   - `Copy One-Time Claude Code Command`
+  - `Open Codex in Terminal`（Phase C QoL，默认不自动执行）
+  - `Open Claude Code in Terminal`（Phase C QoL，默认不自动执行）
   - `Regenerate Session`
 - 权限选择：
   - `Read Trace`
@@ -328,16 +334,22 @@ URL scheme 不属于 Phase B MVP。后续如果实现 `perfetto-desktop://...` i
   - duration
 
 `Regenerate Session` 会 rotate 当前 session secret、断开所有 client、清空 allowlist，
-并要求用户复制新的 one-time command。连接列表里的 `revoke` 只影响对应连接：立即断开，
-当前 session 内拒绝旧 `clientId` 的后续请求，新连接仍需重新授权。
+并要求用户复制新的 one-time command。连接列表里的 `revoke` 对当前 wave 等价于
+“断开当前 client 并 rotate session secret”：旧 Codex/Claude Code 命令失效，避免 host
+用同一 bearer 自动重连。
 
 Audit log 只保存在内存环形缓冲中，默认 1000 条，app 退出即丢弃。后续可提供
 `Export...` 按钮，通过 Tauri 文件 API 导出 JSONL。默认不写 localStorage，不上传远端。
-对 `perfetto-query-sql`，UI summary 只显示前 120 字符和 SHA-256 前 8 位 hash。
+对 `perfetto-execute-query`，UI summary 只显示前 120 字符和 SHA-256 前 8 位 hash。
 完整 SQL 只保存在当前内存环形缓冲中，用户显式导出 JSONL 时才写入本地文件。
 
 UI 文案要明确：Perfetto Desktop 不会管理外部模型账号；用户的 Codex/Claude Code
 CLI 负责登录和调用模型。
+
+`Open ... in Terminal` 只负责把当前 one-time command 带到用户的系统终端中。Desktop
+不内嵌 PTY、不代理外部 CLI 登录态、不持有 agent 工作目录，也不默认执行任意 shell。
+macOS 初版可以优先支持 Terminal.app；iTerm2、Windows Terminal、Linux terminal
+留到 host/平台矩阵明确后再加。
 
 ## 9. Rust ↔ WebView 实现边界
 
@@ -431,7 +443,7 @@ tier，并通过 `notifications/resources/list_changed` 通知 agent 刷新上�
 
 ### Phase B: Local Bridge MVP
 
-- Desktop UI 增加 `Agent Bridge` 页面。
+- Desktop UI 增加 `CLI Agent` 页面。
 - 实测 Claude Code、Codex 和 generic JSON 的 HTTP MCP header 支持，生成 host-specific
   one-time command 模板。
 - `Cargo.toml` 增加 HTTP server/runtime/JSON 相关依赖。
@@ -442,11 +454,11 @@ tier，并通过 `notifications/resources/list_changed` 通知 agent 刷新上�
   调用 tools。
 - 定义 Rust ↔ WebView envelope schema。
 - 实现 `tools/list` capability 过滤和 `notifications/tools/list_changed`。
-- 插件实现 read-only tools：
+- 插件实现 read-only tools，工具名对齐 upstream：
   - `perfetto-get-trace-info`
-  - `perfetto-list-tables`
-  - `perfetto-describe-table`
-  - `perfetto-query-sql`
+  - `perfetto-list-interesting-tables`
+  - `perfetto-list-table-structure`
+  - `perfetto-execute-query`
 - 显示一次性连接命令；不在 UI 中固化"持久配置"按钮。
 - 对 SQL query 做 statement 切分 + row/byte/time 三层 cap。
 - 实现内存 audit log 和 SQL summary 规则。
@@ -454,15 +466,16 @@ tier，并通过 `notifications/resources/list_changed` 通知 agent 刷新上�
 
 ### Phase C: UI Control & Diagnostics
 
-- 增加 `perfetto-show-sql-view`。
-- 增加 `perfetto-show-timeline`。
-- 增加 `perfetto-select-event`，需要 `Drive UI` 权限。
+- 增加 `show-perfetto-sql-view`。
+- 增加 `show-timeline`，通过 `timeSpan` 支持 timeline 跳转，通过 `focus` 支持选择
+  SQL event，需要 `Drive UI` 权限。
 - 添加 tool-call audit log。
 - MCP self-check / `Test Connection` 面板：内置 MCP client 跑 `initialize`、
   `tools/list` 和 `perfetto-get-trace-info`，只用于诊断，不连接 LLM。
 - 可选评估 `perfetto-desktop://open-trace?path=...`，作为 deep-link 基础设施验证；
   它不属于 Agent Bridge 必需能力，且必须先满足 §6.5 的 URL handoff 安全约束。
-- 评估 `Open Terminal + Copy Command` QoL：只打开终端或复制命令，默认不自动执行外部
+- 实现 `Open in Terminal` QoL：按 host 分别提供 `Open Codex in Terminal` /
+  `Open Claude Code in Terminal`，只打开终端并预填或复制命令，默认不自动执行外部
   agent CLI。
 
 ### Phase D: Hardening
@@ -489,16 +502,18 @@ tier，并通过 `notifications/resources/list_changed` 通知 agent 刷新上�
 - 未带或带错 `Authorization` 的 header-capable host 请求被拒绝；degraded fallback
   只在用户明确确认后可用。
 - 一次性连接命令可复制，并能让 Codex/Claude Code 发现 tools。
+- Codex/Claude Code 先连接、Desktop 后加载 trace 时，`tools/list` 不失败；加载后
+  `perfetto-get-trace-info` 能返回最新 trace context。
 - 未经 `initialize` 或 Desktop 确认的 client 不能调用 tools。
 - `Pending Authorization` 阶段发出的 `tools/call` 返回 `pending_authorization`，
   不会在授权后补执行。
 - client 自报的身份不能覆盖 Rust 分配的 `clientId`。
 - tier 降级后 `tools/list` 更新，旧 UI tool 调用返回 `capability_revoked`。
-- `perfetto-query-sql` 能对当前 trace 返回受限 JSON 结果。
+- `perfetto-execute-query` 能对当前 trace 返回受限 JSON 结果。
 - `SELECT * FROM slice` 在大 trace 上能在 15 s timeout 内返回截断或结构化错误，不导致
   UI 内存无界增长。
-- `perfetto-show-timeline` 能把 UI 跳转到指定时间范围。
-- 禁用 Bridge、trace unload 或 session regeneration 后旧连接立即失效。
+- `show-timeline` 能把 UI 跳转到指定时间范围。
+- Revoke、禁用 Bridge、trace unload 或 session regeneration 后旧连接立即失效。
 - Perfetto UI typecheck、plugin ESLint、Tauri build 都通过。
 
 ## 13. 待定问题
