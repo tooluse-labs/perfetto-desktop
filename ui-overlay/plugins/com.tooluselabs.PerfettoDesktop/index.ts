@@ -6,8 +6,311 @@
 //
 //      http://www.apache.org/licenses/LICENSE-2.0
 
+import m from 'mithril';
+import {App} from '../../public/app';
 import {PerfettoPlugin} from '../../public/plugin';
 import {Trace} from '../../public/trace';
+import {Button, ButtonBar} from '../../widgets/button';
+import {Callout} from '../../widgets/callout';
+import {CodeSnippet} from '../../widgets/code_snippet';
+import {Intent} from '../../widgets/common';
+import {Section} from '../../widgets/section';
+
+type BridgeStatus =
+  | 'Disabled'
+  | 'Starting'
+  | 'Listening'
+  | 'Pending Authorization'
+  | 'Connected'
+  | 'Error';
+
+type TauriInvoke = <T>(
+  command: string,
+  args?: Record<string, unknown>,
+) => Promise<T>;
+
+interface AgentBridgeClient {
+  readonly clientId: string;
+  readonly name: string;
+}
+
+interface AgentBridgeSnapshot {
+  readonly status: BridgeStatus;
+  readonly port?: number;
+  readonly endpoint?: string;
+  readonly fallbackPort: boolean;
+  readonly sessionId?: string;
+  readonly pendingClient?: AgentBridgeClient;
+  readonly connectedClient?: AgentBridgeClient;
+  readonly lastError?: string;
+  readonly lastMethod?: string;
+  readonly claudeCommand?: string;
+  readonly codexCommand?: string;
+}
+
+declare global {
+  interface Window {
+    readonly __TAURI_INTERNALS__?: {
+      readonly invoke?: TauriInvoke;
+    };
+  }
+}
+
+function tauriInvoke<T>(
+  command: string,
+  args?: Record<string, unknown>,
+): Promise<T> {
+  const invoke = window.__TAURI_INTERNALS__?.invoke;
+  if (invoke === undefined) {
+    throw new Error('Tauri invoke API is not available in this runtime');
+  }
+  return invoke<T>(command, args);
+}
+
+function isEnabled(status?: AgentBridgeSnapshot): boolean {
+  return status !== undefined && status.status !== 'Disabled';
+}
+
+function snapshotsEqual(
+  a: AgentBridgeSnapshot | undefined,
+  b: AgentBridgeSnapshot | undefined,
+): boolean {
+  if (a === b) return true;
+  if (a === undefined || b === undefined) return false;
+  return (
+    a.status === b.status &&
+    a.port === b.port &&
+    a.endpoint === b.endpoint &&
+    a.fallbackPort === b.fallbackPort &&
+    a.sessionId === b.sessionId &&
+    a.pendingClient?.clientId === b.pendingClient?.clientId &&
+    a.pendingClient?.name === b.pendingClient?.name &&
+    a.connectedClient?.clientId === b.connectedClient?.clientId &&
+    a.connectedClient?.name === b.connectedClient?.name &&
+    a.lastError === b.lastError &&
+    a.lastMethod === b.lastMethod &&
+    a.claudeCommand === b.claudeCommand &&
+    a.codexCommand === b.codexCommand
+  );
+}
+
+class AgentBridgePage implements m.ClassComponent<{readonly app: App}> {
+  private status?: AgentBridgeSnapshot;
+  private error?: string;
+  private refreshTimer?: number;
+  // Monotonic sequence so a slow `refresh` cannot overwrite a newer snapshot
+  // produced by a button click in `runCommand`.
+  private inflight = 0;
+
+  oncreate(): void {
+    void this.refresh();
+    this.refreshTimer = window.setInterval(() => {
+      void this.refresh();
+    }, 2000);
+  }
+
+  onremove(): void {
+    if (this.refreshTimer !== undefined) {
+      window.clearInterval(this.refreshTimer);
+    }
+  }
+
+  view({attrs}: m.CVnode<{readonly app: App}>): m.Children {
+    const status = this.status;
+    return m(
+      '.pf-agent-bridge-page',
+      {
+        style: {
+          maxWidth: '920px',
+          padding: '24px',
+          display: 'grid',
+          gap: '16px',
+        },
+      },
+      [
+        m(
+          Section,
+          {title: 'Agent Bridge'},
+          m('div', {style: metaGridStyle}, [
+            renderMeta('Status', status?.status ?? 'Loading'),
+            renderMeta(
+              'Trace',
+              attrs.app.trace === undefined ? 'No trace loaded' : 'Trace loaded',
+            ),
+            renderMeta('Endpoint', status?.endpoint ?? 'Disabled'),
+            renderMeta(
+              'Port',
+              status?.port === undefined
+                ? 'None'
+                : `${status.port}${status.fallbackPort ? ' fallback' : ''}`,
+            ),
+          ]),
+          this.error !== undefined &&
+            m(Callout, {intent: Intent.Danger}, this.error),
+          status?.lastError !== undefined &&
+            m(Callout, {intent: Intent.Warning}, status.lastError),
+          m(ButtonBar, [
+            m(Button, {
+              label: 'Enable',
+              disabled: isEnabled(status),
+              onclick: () => this.runCommand('agent_bridge_enable'),
+            }),
+            m(Button, {
+              label: 'Disable',
+              disabled: !isEnabled(status),
+              onclick: () => this.runCommand('agent_bridge_disable'),
+            }),
+            m(Button, {
+              label: 'Regenerate Session',
+              disabled: !isEnabled(status) || status?.status === 'Starting',
+              onclick: () =>
+                this.runCommand('agent_bridge_regenerate_session'),
+            }),
+            m(Button, {
+              label: 'Refresh',
+              onclick: () => this.refresh(),
+            }),
+          ]),
+        ),
+        this.renderClientSection(status),
+        this.renderCommandSection(status),
+      ],
+    );
+  }
+
+  private renderClientSection(status?: AgentBridgeSnapshot): m.Children {
+    const pending = status?.pendingClient;
+    const connected = status?.connectedClient;
+    return m(
+      Section,
+      {title: 'Connections'},
+      pending === undefined &&
+        connected === undefined &&
+        m('p', {style: subtleStyle}, 'No pending or connected MCP client.'),
+      pending !== undefined &&
+        m('div', {style: clientRowStyle}, [
+          m('div', [
+            m('strong', 'Pending authorization'),
+            m('div', {style: subtleStyle}, pending.name),
+            m('code', {style: codeStyle}, pending.clientId),
+          ]),
+          m(ButtonBar, [
+            m(Button, {
+              label: 'Allow',
+              intent: Intent.Primary,
+              onclick: () => this.runCommand('agent_bridge_allow_pending'),
+            }),
+            m(Button, {
+              label: 'Deny',
+              onclick: () => this.runCommand('agent_bridge_deny_pending'),
+            }),
+          ]),
+        ]),
+      connected !== undefined &&
+        m('div', {style: clientRowStyle}, [
+          m('div', [
+            m('strong', 'Connected'),
+            m('div', {style: subtleStyle}, connected.name),
+            m('code', {style: codeStyle}, connected.clientId),
+          ]),
+          m(Button, {
+            label: 'Revoke',
+            intent: Intent.Danger,
+            onclick: () => this.runCommand('agent_bridge_revoke_connected'),
+          }),
+        ]),
+      status?.lastMethod !== undefined &&
+        m('p', {style: subtleStyle}, `Last MCP method: ${status.lastMethod}`),
+    );
+  }
+
+  private renderCommandSection(status?: AgentBridgeSnapshot): m.Children {
+    if (!isEnabled(status)) {
+      return m(
+        Section,
+        {title: 'Connection Commands'},
+        m('p', {style: subtleStyle}, 'Enable Agent Bridge to generate commands.'),
+      );
+    }
+    return m(
+      Section,
+      {title: 'Connection Commands'},
+      renderCommandBlock('Claude Code one-time', status?.claudeCommand),
+      renderCommandBlock('Codex one-time', status?.codexCommand),
+    );
+  }
+
+  private async refresh(): Promise<void> {
+    const seq = ++this.inflight;
+    let next: AgentBridgeSnapshot | undefined;
+    let nextError: string | undefined;
+    try {
+      next = await tauriInvoke<AgentBridgeSnapshot>('agent_bridge_status');
+    } catch (err) {
+      nextError = err instanceof Error ? err.message : String(err);
+    }
+    if (seq !== this.inflight) return;
+    if (
+      nextError === this.error &&
+      snapshotsEqual(next, this.status)
+    ) {
+      return;
+    }
+    this.status = next;
+    this.error = nextError;
+    m.redraw();
+  }
+
+  private async runCommand(command: string): Promise<void> {
+    const seq = ++this.inflight;
+    try {
+      const next = await tauriInvoke<AgentBridgeSnapshot>(command);
+      if (seq !== this.inflight) return;
+      this.status = next;
+      this.error = undefined;
+    } catch (err) {
+      if (seq !== this.inflight) return;
+      this.error = err instanceof Error ? err.message : String(err);
+    }
+    m.redraw();
+  }
+}
+
+const metaGridStyle = {
+  display: 'grid',
+  gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))',
+  gap: '12px',
+};
+
+const clientRowStyle = {
+  display: 'flex',
+  justifyContent: 'space-between',
+  gap: '16px',
+  alignItems: 'center',
+};
+
+const codeStyle = {
+  overflowWrap: 'anywhere',
+};
+
+const subtleStyle = {
+  color: 'var(--pf-color-text-muted)',
+};
+
+function renderMeta(label: string, value: string): m.Children {
+  return m('div', [
+    m('div', {style: {color: 'var(--pf-color-text-muted)', fontSize: '12px'}}, label),
+    m('div', {style: {fontWeight: '600', overflowWrap: 'anywhere'}}, value),
+  ]);
+}
+
+function renderCommandBlock(label: string, command?: string): m.Children {
+  if (command === undefined) return null;
+  return m('div', {style: {marginTop: '12px'}}, [
+    m('strong', label),
+    m(CodeSnippet, {text: command, language: 'sh'}),
+  ]);
+}
 
 export default class PerfettoDesktopPlugin implements PerfettoPlugin {
   static readonly id = 'com.tooluselabs.PerfettoDesktop';
@@ -16,6 +319,20 @@ export default class PerfettoDesktopPlugin implements PerfettoPlugin {
     fork-owned plugin is the extension point for desktop-only features such as
     the planned local Agent Bridge.
   `;
+
+  static onActivate(app: App): void {
+    app.pages.registerPage({
+      route: '/agent-bridge',
+      render: () => m(AgentBridgePage, {app}),
+    });
+    app.sidebar.addMenuItem({
+      section: 'settings',
+      text: 'Agent Bridge',
+      href: '#!/agent-bridge',
+      icon: 'hub',
+      sortOrder: 35,
+    });
+  }
 
   async onTraceLoad(_trace: Trace): Promise<void> {
     // Reserved for desktop-only integrations. Keep the plugin enabled so the

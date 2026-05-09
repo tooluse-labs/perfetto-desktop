@@ -53,7 +53,8 @@ MCP server 冲突：
 - 在 Perfetto Desktop 内置一个默认关闭的本地 Agent Bridge。
 - Bridge 启用后启动 loopback MCP server，例如 `127.0.0.1:38471`。
 - UI 默认显示一次性连接命令，用户将其粘贴到 Codex 或 Claude Code 的 CLI 中。
-- 可选提供持久配置命令，但不把一次性授权写入长期 MCP 配置。
+- 不在 UI 中固化"持久配置"模板：每次会话的 bearer 都是新的，持久配置无法独立认证，
+  会误导用户。需要持久配置的高级用户可以手动维护 MCP host 文件。
 - 通过 MCP tools 暴露 trace 查询和受控 UI 操作。
 - 不让 Perfetto Desktop 保存 Codex、Claude、OpenAI、Anthropic 等模型账号凭据。
 - 每次连接都需要用户在 Desktop 内确认，且权限按 capability 分层。
@@ -138,15 +139,11 @@ server 进程；本方案中 server 已经由 GUI app 启动，所以外部 agen
   JSON 是否支持 HTTP MCP headers。支持 header 的 host 默认使用 Bearer；不支持的
   host 只能走 degraded fallback，并在 Desktop 确认弹窗中明确提示风险。
 
-持久配置命令可以作为可选按钮提供，例如：
-
-```sh
-codex mcp add perfetto-desktop --url http://127.0.0.1:38471/mcp
-claude mcp add --transport http perfetto-desktop http://127.0.0.1:38471/mcp
-```
-
-持久配置 URL 不应包含一次性授权。安全边界仍由 Desktop 的 Enable/Disable、
-连接确认和 per-trace capability 授权控制。
+Phase B 不在 UI 中提供持久配置按钮。bearer 每会话刷新，没有 secret 的持久 URL
+（例如 `claude mcp add --transport http perfetto-desktop <url>`）连不上 server，留着
+只会误导用户。需要持久配置的高级用户可以手动写入 `~/.config/<host>/mcp.json` 之类
+的 host 配置文件，安全边界仍由 Desktop Enable/Disable、连接确认和 per-trace
+capability 授权控制。
 
 Phase B 默认只提供复制命令，不自动调起 shell 或启动 `claude` / `codex` 进程。
 `Open Terminal + Copy Command` 可以作为 Phase C/D 的 QoL 候选，但必须默认不自动执行
@@ -307,13 +304,12 @@ URL scheme 不属于 Phase B MVP。后续如果实现 `perfetto-desktop://...` i
 新增一个轻量入口，建议在 `com.tooluselabs.PerfettoDesktop` 插件中注册页面：
 
 - Sidebar: `Agent Bridge`
-- 状态：`Disabled` / `Listening` / `Pending Authorization` / `Connected` / `Error`
+- 状态：`Disabled` / `Starting` / `Listening` / `Pending Authorization` / `Connected` / `Error`
 - 操作：
   - `Enable`
   - `Disable`
   - `Copy One-Time Codex Command`
   - `Copy One-Time Claude Code Command`
-  - `Copy Persistent Setup Command`
   - `Regenerate Session`
 - 权限选择：
   - `Read Trace`
@@ -449,8 +445,7 @@ tier，并通过 `notifications/resources/list_changed` 通知 agent 刷新上�
   - `perfetto-list-tables`
   - `perfetto-describe-table`
   - `perfetto-query-sql`
-- 显示一次性连接命令。
-- 提供可选持久配置命令，但不在持久 URL 中包含一次性授权。
+- 显示一次性连接命令；不在 UI 中固化"持久配置"按钮。
 - 对 SQL query 做 statement 切分 + row/byte/time 三层 cap。
 - 实现内存 audit log 和 SQL summary 规则。
 - 在 fork plugin `onTraceLoad` 校验 `trace.timeline` / `trace.selection` 可用性。
