@@ -39,6 +39,7 @@ struct BridgeInner {
     session: Option<Arc<SessionConfig>>,
     pending_client: Option<ClientInfo>,
     connected_client: Option<ClientInfo>,
+    trace_context: Option<TraceContext>,
     shutdown: Option<oneshot::Sender<()>>,
     last_error: Option<String>,
     last_method: Option<String>,
@@ -93,6 +94,23 @@ struct ClientInfo {
     name: String,
 }
 
+#[derive(Clone, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TraceContext {
+    title: String,
+    url: String,
+    start: String,
+    end: String,
+    unix_offset: String,
+    timezone_offset_minutes: i32,
+    import_errors: u32,
+    trace_types: Vec<String>,
+    has_ftrace: bool,
+    uuid: String,
+    cached: bool,
+    downloadable: bool,
+}
+
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AgentBridgeSnapshot {
@@ -134,6 +152,7 @@ pub fn commands() -> impl Fn(tauri::ipc::Invoke) -> bool {
         agent_bridge_deny_pending,
         agent_bridge_revoke_connected,
         agent_bridge_regenerate_session,
+        agent_bridge_set_trace_context,
     ]
 }
 
@@ -237,7 +256,9 @@ pub fn agent_bridge_disable(
             .lock()
             .map_err(|_| "agent bridge state lock poisoned".to_string())?;
         let shutdown = inner.shutdown.take();
+        let trace_context = inner.trace_context.clone();
         *inner = BridgeInner::default();
+        inner.trace_context = trace_context;
         shutdown
     };
     if let Some(shutdown) = shutdown {
@@ -327,6 +348,22 @@ pub fn agent_bridge_regenerate_session(
         inner.pending_client = None;
         inner.connected_client = None;
         inner.mode = BridgeMode::Listening;
+    }
+    snapshot(&state)
+}
+
+#[tauri::command]
+pub fn agent_bridge_set_trace_context(
+    state: State<'_, AgentBridgeState>,
+    context: TraceContext,
+) -> Result<AgentBridgeSnapshot, String> {
+    {
+        let mut inner = state
+            .inner()
+            .inner
+            .lock()
+            .map_err(|_| "agent bridge state lock poisoned".to_string())?;
+        inner.trace_context = Some(context);
     }
     snapshot(&state)
 }
@@ -685,6 +722,12 @@ fn tools_call_response(
     state: &AgentBridgeState,
 ) -> Response<ResponseBody> {
     if let Some(error) = authorization_error(state) {
+        if error == "pending_authorization" {
+            return tool_text_response(
+                id,
+                "Desktop authorization is pending. Ask the user to click Allow in Perfetto Desktop, then retry this tool call.",
+            );
+        }
         return json_rpc_error(id, -32002, &error);
     }
 
@@ -701,16 +744,26 @@ fn tools_call_response(
         Ok(snapshot) => snapshot,
         Err(err) => return json_rpc_error(id, -32603, &err),
     };
+    let trace_context = state
+        .inner
+        .lock()
+        .ok()
+        .and_then(|inner| inner.trace_context.clone());
     let text = serde_json::to_string_pretty(&json!({
         "bridgeStatus": snapshot.status,
         "endpoint": snapshot.endpoint,
         "sessionId": snapshot.session_id,
         "client": snapshot.connected_client,
+        "trace": trace_context,
         "implementedTools": ["perfetto-get-trace-info"],
-        "note": "Trace-backed tools will be implemented in the next Phase B wave.",
+        "note": "This wave exposes trace metadata only. SQL and UI-driving tools will be implemented in the next Phase B wave.",
     }))
     .unwrap_or_else(|_| "{}".to_string());
 
+    tool_text_response(id, &text)
+}
+
+fn tool_text_response(id: Option<Value>, text: &str) -> Response<ResponseBody> {
     json_response(json!({
         "jsonrpc": "2.0",
         "id": id.unwrap_or(Value::Null),

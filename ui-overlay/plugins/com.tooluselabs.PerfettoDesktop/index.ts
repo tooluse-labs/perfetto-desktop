@@ -48,6 +48,21 @@ interface AgentBridgeSnapshot {
   readonly codexCommand?: string;
 }
 
+interface AgentBridgeTraceContext {
+  readonly title: string;
+  readonly url: string;
+  readonly start: string;
+  readonly end: string;
+  readonly unixOffset: string;
+  readonly timezoneOffsetMinutes: number;
+  readonly importErrors: number;
+  readonly traceTypes: readonly string[];
+  readonly hasFtrace: boolean;
+  readonly uuid: string;
+  readonly cached: boolean;
+  readonly downloadable: boolean;
+}
+
 declare global {
   interface Window {
     readonly __TAURI_INTERNALS__?: {
@@ -440,7 +455,23 @@ export default class PerfettoDesktopPlugin implements PerfettoPlugin {
   }
 
   async onTraceLoad(_trace: Trace): Promise<void> {
-    // Reserved for desktop-only integrations. Keep the plugin enabled so the
-    // overlay and default-plugin patch path remain exercised.
+    const traceInfo = _trace.traceInfo;
+    const context: AgentBridgeTraceContext = {
+      title: traceInfo.traceTitle,
+      url: traceInfo.traceUrl,
+      start: traceInfo.start.toString(),
+      end: traceInfo.end.toString(),
+      unixOffset: traceInfo.unixOffset.toString(),
+      timezoneOffsetMinutes: traceInfo.tzOffMin,
+      importErrors: traceInfo.importErrors,
+      traceTypes: traceInfo.traceTypes,
+      hasFtrace: traceInfo.hasFtrace,
+      uuid: traceInfo.uuid,
+      cached: traceInfo.cached,
+      downloadable: traceInfo.downloadable,
+    };
+    await tauriInvoke<AgentBridgeSnapshot>('agent_bridge_set_trace_context', {
+      context,
+    });
   }
 }
