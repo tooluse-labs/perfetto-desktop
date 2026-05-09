@@ -17,74 +17,75 @@
 
 ---
 
-[Tooluse Labs](https://github.com/tooluse-labs) 出品的 Perfetto 桌面客户端，
-基于 Tauri 2，把官方 Perfetto UI 装成一个原生桌面应用，并加上一个叫
-**CLI Agent** 的本地 MCP bridge——让 Codex、Claude Code 这类 MCP agent
-直接对你当前在 GUI 里打开的 trace 干活。
+[Tooluse Labs](https://github.com/tooluse-labs) 构建的 Perfetto 桌面客户端，
+基于 Tauri 2 将官方 Perfetto UI 封装为原生桌面应用，并新增 **CLI Agent** ——
+一个本地 MCP bridge，使 Codex、Claude Code 等 MCP agent 能够直接基于 GUI
+当前打开的 trace 进行分析。
 
-仓库里只放产品代码。Perfetto 上游本身当作构建依赖处理：版本由
-[`DEPS`](DEPS) 里的 SHA 锁定，由 [`scripts/setup.sh`](scripts/setup.sh)
-拉到 `third_party/perfetto/`。我们不会改上游源码，万一非改不可，就以补丁
-形式放在 `patches/perfetto/` 下，setup 时再打上去。
+本仓库仅托管产品代码。Perfetto 上游作为构建依赖处理：版本由
+[`DEPS`](DEPS) 中的 SHA 锁定，由 [`scripts/setup.sh`](scripts/setup.sh)
+拉取至 `third_party/perfetto/`。我们不会修改上游源码；如确需调整，则以
+补丁文件形式置于 `patches/perfetto/` 目录，在 setup 阶段统一应用。
 
 ## 目录结构
 
 | 路径 | 用途 |
 | --- | --- |
-| `desktop/` | Tauri 项目（桌面壳本体） |
-| `ui-overlay/` | fork 自己的 UI 插件，setup 阶段覆盖到 Perfetto UI 源码树 |
-| `patches/perfetto/` | setup 阶段打到 Perfetto checkout 上的 git 补丁 |
+| `desktop/` | Tauri 项目（桌面壳） |
+| `ui-overlay/` | fork 自有的 UI 插件，setup 阶段覆盖到 Perfetto UI 源码树 |
+| `patches/perfetto/` | setup 阶段应用到 Perfetto checkout 的 git 补丁 |
 | `scripts/` | `setup.sh`、`apply-patches.sh`、`sync-overlay.sh`、`update-perfetto.sh` |
 | `third_party/perfetto/` | 已 gitignore，由 `setup.sh` 填充 |
 | `docs/design-docs/` | 架构与发布相关的设计文档 |
 
 ## 下载
 
-GitHub Actions 的 release workflow 会产出：
+Release 构建由 GitHub Actions release workflow 产出：
 
 - macOS arm64：未签名 DMG。
 - Windows x64：未签名 NSIS `.exe` 与 MSI `.msi` 安装包。
 
-应用还没做代码签名，所以首次运行时 macOS Gatekeeper 和 Windows SmartScreen
-可能会弹警告。
+应用尚未代码签名，因此首次启动时 macOS Gatekeeper 与 Windows SmartScreen
+可能会弹出警告。
 
-## 快速上手
+## 快速开始
 
 ```sh
 git clone https://github.com/tooluse-labs/perfetto-desktop
 cd perfetto-desktop
-./scripts/bootstrap.sh                          # 本机工具链 (pnpm + rustup)，每台机器只用跑一次
-./scripts/setup.sh                              # 拉 Perfetto 上游 + UI 构建依赖
-(cd desktop && pnpm install && pnpm tauri dev)  # 起 Tauri 壳
+./scripts/bootstrap.sh                          # 本机工具链 (pnpm + rustup)，每台机器仅需执行一次
+./scripts/setup.sh                              # 拉取 Perfetto 上游与 UI 构建依赖
+(cd desktop && pnpm install && pnpm tauri dev)  # 启动 Tauri 壳
 ```
 
-`pnpm tauri dev` 走的是 `tauri.conf.json:beforeDevCommand`，直接调
-`ui/build.js` 而不是 `ui/run-dev-server`——后者把 `--only-wasm-memory64`
-写死了，但 macOS 的 WKWebView 加载不了 Memory64 WASM。详见
+`pnpm tauri dev` 通过 `tauri.conf.json:beforeDevCommand` 直接调用
+`ui/build.js`，而非 `ui/run-dev-server`——后者将 `--only-wasm-memory64`
+写死在内部，但 macOS 的 WKWebView 无法加载 Memory64 WASM。详见
 `docs/design-docs/perfetto-desktop-architecture.md` §6.1。
 
-`scripts/bootstrap.sh` 暂时只覆盖 macOS。Windows 安装包靠 CI 在
-`windows-latest` 上出（Perfetto UI 先在 Linux 上预编译好，再喂给 Windows
-打包流程）；本地 Windows 的 bootstrap 文档先欠着。
+`scripts/bootstrap.sh` 当前仅覆盖 macOS。Windows 安装包由 CI 在
+`windows-latest` 上构建（Perfetto UI 在 Linux 上预编译，再交由 Windows
+打包流程消费）；本地 Windows 的 bootstrap 文档暂未补齐。
 
 ## CLI Agent
 
-CLI Agent 就是 Perfetto Desktop 起的一个本地 MCP bridge。让外部 agent 借
-你已有的 Codex / Claude Code 订阅干活，trace 和 UI 状态依然由 Perfetto
-Desktop 管。
+CLI Agent 是 Perfetto Desktop 提供的本地 MCP bridge，允许外部 agent 借助
+你已有的 Codex / Claude Code 订阅工作，trace 与 UI 状态则仍由 Perfetto
+Desktop 持有。
 
-用法：
+使用流程：
 
-1. 打开 Perfetto Desktop，加载一个 trace。
-2. 在侧边栏 "current trace" 分组里点 **CLI Agent**。
-3. 把生成的 **Codex** 或 **Claude Code** 命令拷出来。
-4. 在终端跑这条命令，让 agent 去分析当前 trace。
+1. 启动 Perfetto Desktop，加载一个 trace。
+2. 在侧边栏 "current trace" 分组中打开 **CLI Agent**。
+3. 复制生成的 **Codex** 或 **Claude Code** 命令。
+4. 在终端中执行该命令，让 agent 分析当前 trace。
 
-复制按钮在 trace 加载完之前是灰的，确保 agent 一上来就有 trace 上下文。
-Bridge 只听 loopback，要 Bearer token 才放行，浏览器跨站请求一律拒，
-桌面端单实例运行，所以同一时间只有一个本地 MCP 端口在工作。
+在 trace 加载完成前，复制按钮保持禁用，以确保 agent 启动时即具备 trace
+上下文。Bridge 仅监听 loopback，校验 Bearer token 后才放行请求；浏览器
+跨站请求一律拒绝；桌面端以单实例运行，确保同一时间只有一个本地 MCP
+端口对外服务。
 
-工具命名尽量沿用上游 Perfetto MCP，主要这些：
+工具命名尽量沿用上游 Perfetto MCP，主要包括：
 
 - `perfetto-get-trace-info`
 - `perfetto-execute-query`
@@ -95,66 +96,68 @@ Bridge 只听 loopback，要 Bearer token 才放行，浏览器跨站请求一�
 
 ## 为什么做 CLI Agent，而不扩展 AI Chat
 
-Upstream 的 AI Chat 是围着 Gemini Files API + Gemini 自家的 tool contract
-写的，要再加一个 provider 基本等于把 chat UI、流式、文件上传、模型适配层
-全部重写。CLI Agent 干脆不接这一摊：对话、流式、重试、账号都交给用户已经
-在用的 Codex / Claude Code / Cursor / Claude Desktop，Perfetto Desktop
-只把当前 trace 按标准 MCP 工具暴露出去——任何讲 MCP 的 host 都能直接接上，
-我们也不用为每家 provider 各做一份 chat 界面。
+把 AI Chat 扩成多 provider 在技术上并不困难——我们本地已经实现过一版
+多 LLM chat 界面，最终选择不上线。卡点不在工程，而在性价比。应用内
+chat 面板只能走原始 API key 鉴权，按 token 计费；而大多数用户已经在为
+Codex、Claude Code、Cursor、Claude Desktop 这类订阅制 agent 付月费。
+让这些已有的 CLI 通过 MCP bridge 接入 Perfetto Desktop，订阅本身就把
+对话成本覆盖掉了——不需要再录一次 API key，不会重复扣费，也少一套账号
+要维护。如果我们再做一份自有 chat，等于让用户为同一段对话付两次钱，
+而外部 agent 在对话体验上更成熟，我们也做不出更好的差异化。
 
 ## 为什么不在桌面端嵌入终端
 
-Perfetto Desktop 既不开 PTY 也不代理 agent CLI。用户的 CLI 还是跑在用户
-自己的终端里，模型 API key、agent 工作目录、shell 历史这些东西都不会落到
-Perfetto Desktop 进程里。规划中的 `Open in Terminal` QoL（Phase C）也就只是
-把连接命令预填进系统终端而已，回车还是用户按，agent 进程依然由用户掌握。
+Perfetto Desktop 既不启动 PTY，也不代理 agent CLI。用户的 CLI 仍运行在
+用户自己的终端中，模型 API key、agent 工作目录、shell 历史等均不会进入
+Perfetto Desktop 的进程。规划中的 `Open in Terminal` QoL（Phase C）仅会
+将连接命令预填至系统终端，由用户自行确认执行；agent 进程始终由用户管理。
 
 ## 设计
 
-完整设计见
+完整设计请参见
 [docs/design-docs/perfetto-desktop-architecture.zh-CN.md](docs/design-docs/perfetto-desktop-architecture.zh-CN.md)
 （或
 [英文版](docs/design-docs/perfetto-desktop-architecture.md)），
-里面有架构、MVP 验收标准、以及发布节奏。
+其中涵盖架构、MVP 验收标准与发布节奏。
 
 ## 与上游 Perfetto 的关系
 
-- 仓库历史里我们不会动上游 Perfetto 任何一行代码。
-- 通过 `scripts/update-perfetto.sh` 定期 bump 固定的 SHA，跟上上游修复
-  和新特性。每个 stable release 锁在打 tag 时的 SHA。
-- 实在绕不过去要打补丁，就放进 `patches/perfetto/` 当 `.patch` 文件，
-  setup 阶段自动应用。`apply-patches.sh` 一旦发现某个补丁不再能干净
-  应用就直接报错退出，把 upstream drift 这种问题挡在 setup 阶段，
-  不会带到构建。
+- 仓库提交历史中不修改上游 Perfetto 任何一行代码。
+- 通过 `scripts/update-perfetto.sh` 定期 bump 固定的 SHA，以跟进上游的
+  修复与新特性；stable release 锁定在打 tag 时的 SHA。
+- 如确需打补丁，则以 `.patch` 文件形式置于 `patches/perfetto/`，setup
+  阶段自动应用。`apply-patches.sh` 一旦检测到补丁无法干净应用即报错
+  退出，将 upstream drift 类问题在 setup 阶段拦截，避免遗留至构建阶段。
 
 ## Perfetto Desktop vs perfetto-mcp-rs
 
 [`tooluse-labs/perfetto-mcp-rs`](https://github.com/tooluse-labs/perfetto-mcp-rs)
-是无头版的姊妹项目。如果你只想从 CLI 或编辑器里直接喂 trace 文件给一个
-MCP server，根本不打算开 Perfetto Desktop——选它就好。它是个独立的 Rust
-二进制，走 stdio 讲 MCP，自动管 `trace_processor_shell`，还内置了一套
-Chrome 专项工具：scroll jank、page load、startup、主线程 hotspot 之类。
+是对应的无头版项目。若你仅需在 CLI 或编辑器中将 trace 文件直接提供给一
+个 MCP server，而不打算启动 Perfetto Desktop，建议选用它。它是一个独立
+的 Rust 二进制，通过 stdio 实现 MCP，自动管理 `trace_processor_shell`，
+并内置 Chrome 专项分析工具：scroll jank、page load、startup、主线程
+hotspot 等。
 
-如果 trace 已经在 GUI 里打开，你想让 agent 共用同一份上下文，跑点受限的
-PerfettoSQL，或者驱动 Perfetto UI（开 SQL view、把 timeline 拉到某段
-时间……），那就走 Perfetto Desktop CLI Agent。
+若 trace 已在 GUI 中加载，且希望 agent 与之共享同一上下文，运行受限的
+PerfettoSQL，或驱动 Perfetto UI（打开 SQL view、将 timeline 定位到指定
+时间区间等），则使用 Perfetto Desktop CLI Agent。
 
 | 维度 | Perfetto Desktop CLI Agent | `perfetto-mcp-rs` |
 | --- | --- | --- |
-| 主要场景 | Perfetto UI 已经打开时的交互式排查。 | 终端、编辑器、或者 MCP 客户端里的无头分析。 |
-| 运行形态 | Tauri 桌面应用 + 一个 loopback HTTP MCP bridge。 | 独立 Rust MCP server 二进制。 |
-| MCP 传输 | `127.0.0.1` 上的 Streamable HTTP，配 Bearer token。 | 客户端拉起的 stdio MCP。 |
-| Trace 归属 | Trace 与 UI 状态都归 Perfetto Desktop 管。 | MCP server 按 agent 给的路径加载 trace 文件。 |
-| UI 控制 | 可以做经过审核的 UI 动作（开 SQL view、聚焦 timeline 等）。 | 没有 GUI，只把数据和摘要回给 MCP 客户端。 |
-| SQL 访问 | 对 GUI 当前加载的 trace 跑受限 PerfettoSQL。 | `execute_sql` 跑 PerfettoSQL，结果是带行数上限的列式 JSON。 |
-| Schema 探索 | 沿用上游 Perfetto MCP 那套表/结构工具。 | 自带 `list_tables`、`list_table_structure`、process/thread 辅助、stdlib 模块发现。 |
-| Chrome 专项分析 | 通用 PerfettoSQL + UI 协助。 | 内置 Chrome 工具：scroll jank、page load、startup、主线程 hotspot、interactions。 |
-| `trace_processor_shell` | 直接复用桌面应用里 Perfetto UI 的 trace engine。 | 自动下载和管理，或者读 `PERFETTO_TP_PATH`。 |
-| 客户端配置 | 在应用里按会话复制命令；token 随桌面会话轮换。 | 安装器能自动注册到 Claude Code / Codex；也能手配 MCP。 |
-| 平台 | 桌面应用：macOS arm64、Windows x64。 | Linux、macOS、Windows 都有预编译。 |
-| 批量 / CI 场景 | 不太适合；要桌面应用 + UI 已加载的 trace。 | 适合脚本、可重复 CLI 工作流、CI 风格的批量分析。 |
-| 安全边界 | 本地 loopback server，bearer 鉴权 + host/origin 校验 + 桌面单实例。 | stdio 进程边界；能访问什么完全看 MCP 客户端让它加载哪些路径。 |
+| 主要场景 | Perfetto UI 已加载时的交互式排查。 | 终端、编辑器或 MCP 客户端中的无头分析。 |
+| 运行形态 | Tauri 桌面应用 + loopback HTTP MCP bridge。 | 独立的 Rust MCP server 二进制。 |
+| MCP 传输 | `127.0.0.1` 上的 Streamable HTTP，配合 Bearer token。 | 由客户端拉起的 stdio MCP。 |
+| Trace 归属 | Trace 与 UI 状态均由 Perfetto Desktop 持有。 | MCP server 按 agent 提供的路径加载 trace 文件。 |
+| UI 控制 | 可执行经过审核的 UI 操作（打开 SQL view、聚焦 timeline 等）。 | 无 GUI，仅向 MCP 客户端返回数据与摘要。 |
+| SQL 访问 | 针对 GUI 当前加载的 trace 执行受限 PerfettoSQL。 | 通过 `execute_sql` 执行 PerfettoSQL，返回带行数上限的列式 JSON。 |
+| Schema 探索 | 沿用上游 Perfetto MCP 提供的表/结构工具。 | 内置 `list_tables`、`list_table_structure`、process/thread 辅助、stdlib 模块发现等。 |
+| Chrome 专项分析 | 通用 PerfettoSQL，配合 UI 协助排查。 | 内置 Chrome 工具：scroll jank、page load、startup、主线程 hotspot、interactions。 |
+| `trace_processor_shell` | 直接复用桌面应用中 Perfetto UI 的 trace engine。 | 自动下载与管理，或读取 `PERFETTO_TP_PATH`。 |
+| 客户端配置 | 在应用内按会话复制命令；token 随桌面会话轮换。 | 安装器可自动注册至 Claude Code / Codex；亦支持手动配置 MCP。 |
+| 平台 | 桌面应用：macOS arm64、Windows x64。 | Linux、macOS、Windows 均提供预编译。 |
+| 批量 / CI 场景 | 不适合；需要桌面应用且 UI 已加载 trace。 | 适合脚本、可重复的 CLI 工作流与 CI 风格的批量分析。 |
+| 安全边界 | 本地 loopback server，结合 Bearer 鉴权、host/origin 校验与桌面单实例。 | stdio 进程边界；可访问范围由 MCP 客户端指定的加载路径决定。 |
 
 ## License
 
-Apache 2.0，跟 upstream Perfetto 一致。
+Apache 2.0，与上游 Perfetto 一致。

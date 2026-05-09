@@ -99,14 +99,16 @@ Exposed tools reuse upstream Perfetto MCP naming where possible, including:
 
 ## Why CLI Agent, not extend AI Chat
 
-Upstream's AI Chat is built around the Gemini Files API and a
-Gemini-specific tool contract; adding another provider means rebuilding
-the chat UI, the streaming, the file upload, and the model adapters. CLI
-Agent instead lets the user's existing Codex / Claude Code / Cursor /
-Claude Desktop install handle conversation, streaming, retries, and
-account management. Perfetto Desktop only exposes the loaded trace as
-standard MCP tools, so any host that speaks MCP works without us shipping
-a per-provider chat surface.
+Extending AI Chat into a multi-provider chat panel is feasible — we built
+one internally and chose not to ship it. The blocker isn't engineering,
+it's economics. A chat panel inside Perfetto Desktop can only authenticate
+per provider via raw API keys, billed per token. Most users already pay a
+flat-rate subscription for Codex, Claude Code, Cursor, or Claude Desktop;
+pointing those CLIs at Perfetto Desktop's MCP bridge reuses that
+subscription — no new credential, no extra spend, and no second account
+to manage. Shipping our own chat would charge users twice for the same
+conversation, without offering anything those external agents can't do
+better.
 
 ## Why no embedded terminal
 
