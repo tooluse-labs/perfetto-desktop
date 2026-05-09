@@ -2,6 +2,11 @@
 
 > 中文版：[perfetto-desktop-architecture.zh-CN.md](perfetto-desktop-architecture.zh-CN.md)
 
+> Status note: the in-app Multi-LLM Chat direction has been superseded
+> by the local Agent Bridge / MCP design. Use
+> [perfetto-desktop-agent-bridge.zh-CN.md](perfetto-desktop-agent-bridge.zh-CN.md)
+> as the current AI integration direction.
+
 ## 1. Background
 
 Perfetto's primary user-facing surface is the Web UI under `ui/`. The

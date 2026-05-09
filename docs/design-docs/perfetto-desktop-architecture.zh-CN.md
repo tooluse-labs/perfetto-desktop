@@ -2,6 +2,11 @@
 
 > English version: [perfetto-desktop-architecture.md](perfetto-desktop-architecture.md)
 
+> 状态说明：内置 Multi-LLM Chat 方向已被本地 Agent Bridge / MCP 方案取代。
+> 当前 AI 集成方向以
+> [perfetto-desktop-agent-bridge.zh-CN.md](perfetto-desktop-agent-bridge.zh-CN.md)
+> 为准。
+
 ## 1. 背景
 
 Perfetto 当前以 Web UI 为主要交互形态，核心 UI 位于 `ui/`，已有
