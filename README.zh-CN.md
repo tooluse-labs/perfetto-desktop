@@ -162,9 +162,19 @@ cd perfetto-desktop
 写死在内部，但 macOS 的 WKWebView 无法加载 Memory64 WASM。详见
 `docs/design-docs/perfetto-desktop-architecture.md` §6.1。
 
-`scripts/bootstrap.sh` 当前仅覆盖 macOS。Windows 安装包由 CI 在
-`windows-latest` 上构建（Perfetto UI 在 Linux 上预编译，再交由 Windows
-打包流程消费）；本地 Windows 的 bootstrap 文档暂未补齐。
+`scripts/bootstrap.sh` 当前仅覆盖 macOS。Windows 本地打包需要先准备
+`third_party/perfetto/ui/out/dist`（从 Linux 或 macOS 构建出的 Perfetto UI
+dist artifact 解压而来），然后执行：
+
+```powershell
+bash ./scripts/setup.sh --no-ui-deps
+Push-Location desktop; corepack pnpm install --frozen-lockfile; Pop-Location
+powershell -ExecutionPolicy Bypass -File scripts\package-windows-local.ps1
+```
+
+本地脚本默认生成 NSIS `.exe` 安装包，因为它在打包阶段不依赖 Windows
+Installer 服务。若本机 WiX/MSI 校验可用，可加 `-Bundles nsis,msi` 同时
+生成 MSI。
 
 ### 仓库结构
 
@@ -173,7 +183,7 @@ cd perfetto-desktop
 | `desktop/` | Tauri 项目（桌面壳） |
 | `ui-overlay/` | fork 自有的 UI 插件，setup 阶段覆盖到 Perfetto UI 源码树 |
 | `patches/perfetto/` | setup 阶段应用到 Perfetto checkout 的 git 补丁 |
-| `scripts/` | `setup.sh`、`apply-patches.sh`、`sync-overlay.sh`、`update-perfetto.sh` |
+| `scripts/` | `setup.sh`、`apply-patches.sh`、`sync-overlay.sh`、`update-perfetto.sh`、`package-windows-local.ps1` |
 | `third_party/perfetto/` | 已 gitignore，由 `setup.sh` 填充 |
 | `docs/design-docs/` | 架构与发布相关的设计文档 |
 

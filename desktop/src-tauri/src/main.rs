@@ -17,7 +17,24 @@ fn main() {
             }
         }))
         .manage(agent_bridge_state)
-        .setup(move |_| {
+        .setup(move |app| {
+            let main_window = app
+                .config()
+                .app
+                .windows
+                .iter()
+                .find(|window| window.label == "main")
+                .expect("main window config is missing");
+            let mut main_window_builder =
+                tauri::WebviewWindowBuilder::from_config(app, main_window)?;
+
+            #[cfg(target_os = "windows")]
+            {
+                main_window_builder = main_window_builder
+                    .data_directory(app.path().app_local_data_dir()?.join("webview-v2"));
+            }
+
+            main_window_builder.build()?;
             agent_bridge::spawn_auto_start(agent_bridge_auto_start.clone());
             Ok(())
         })

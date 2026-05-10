@@ -179,6 +179,10 @@ jobs:
         with:
           workspaces: desktop/src-tauri
 
+      - name: Clear cached Tauri executable
+        working-directory: desktop/src-tauri
+        run: cargo clean -p perfetto-desktop
+
       - name: pnpm install
         working-directory: desktop
         run: pnpm install --frozen-lockfile

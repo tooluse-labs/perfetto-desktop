@@ -174,9 +174,19 @@ cd perfetto-desktop
 and macOS WKWebView cannot load Memory64 WASM. See
 `docs/design-docs/perfetto-desktop-architecture.md` §6.1.
 
-`scripts/bootstrap.sh` currently supports macOS only. CI builds the Windows
-installer on `windows-latest` (Perfetto UI is prebuilt on Linux and consumed
-by the Windows packaging job); local Windows bootstrap docs are still pending.
+`scripts/bootstrap.sh` currently supports macOS only. For local Windows
+packaging, first prepare `third_party/perfetto/ui/out/dist` from a Linux or
+macOS Perfetto UI build artifact, then run:
+
+```powershell
+bash ./scripts/setup.sh --no-ui-deps
+Push-Location desktop; corepack pnpm install --frozen-lockfile; Pop-Location
+powershell -ExecutionPolicy Bypass -File scripts\package-windows-local.ps1
+```
+
+The local script defaults to the NSIS `.exe` installer because it does not
+require the Windows Installer service during packaging. Use
+`-Bundles nsis,msi` when the local machine can run WiX/MSI validation.
 
 ### Repository layout
 
@@ -185,7 +195,7 @@ by the Windows packaging job); local Windows bootstrap docs are still pending.
 | `desktop/` | Tauri project (the desktop shell) |
 | `ui-overlay/` | Fork-owned UI plugins overlaid into Perfetto's UI tree at setup time. |
 | `patches/perfetto/` | Git patches applied to the Perfetto checkout at setup time. |
-| `scripts/` | `setup.sh`, `apply-patches.sh`, `sync-overlay.sh`, `update-perfetto.sh` |
+| `scripts/` | `setup.sh`, `apply-patches.sh`, `sync-overlay.sh`, `update-perfetto.sh`, `package-windows-local.ps1` |
 | `third_party/perfetto/` | Gitignored. Populated by `setup.sh`. |
 | `docs/design-docs/` | Architecture and rollout docs |
 
