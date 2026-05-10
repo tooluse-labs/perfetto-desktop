@@ -555,9 +555,21 @@ impl SessionConfig {
         // shims) hand the argv off to cmd.exe, whose tokenizer strips embedded
         // `"`. The mitigations below avoid putting `"` in the args:
         //   - Claude: write the config JSON to a temp file (ASCII, no BOM)
-        //     and pass the path to --mcp-config. Use cmdlets only so the
-        //     command also works in Windows PowerShell Constrained Language
-        //     Mode, where `[IO.Path]::GetTempFileName()` is blocked.
+        //     and pass the path to --mcp-config. The temp path is built
+        //     from $env:TEMP + a fresh GUID, not from `New-TemporaryFile`:
+        //     PowerShell 5.1's native-arg binder silently drops $null/empty
+        //     values when forwarding to a native command, so a failed
+        //     `(New-TemporaryFile).FullName` (hooked cmdlet, OneDrive-
+        //     redirected TEMP, AV intercept, restricted mode) would let
+        //     the trailing prompt slide into --mcp-config's slot. claude
+        //     would then try to load the prompt as a file path, producing
+        //     a confusing "MCP config file not found: <cwd>\<prompt>"
+        //     instead of surfacing the real failure. The Test-Path check
+        //     plus the double-quoted "$tmp" make any failure loud and
+        //     keep the slot occupied even on an empty value. All of
+        //     $env:TEMP, Join-Path, and [guid] are CLM-allowed, so this
+        //     still works under Constrained Language Mode where
+        //     `[IO.Path]::GetTempFileName()` is blocked.
         //   - Codex: flip the -c TOML pairs to outer double / inner single
         //     quotes. cmd.exe strips the outer double quotes; the inner
         //     single quotes pass through and TOML parses them as literal
@@ -566,7 +578,7 @@ impl SessionConfig {
             "claude --strict-mcp-config --mcp-config '{claude_json}' '{CLI_TRACE_CONTEXT_PROMPT}'"
         );
         let claude_command_ps = format!(
-            "$cfg='{claude_json}'; $tmp=(New-TemporaryFile).FullName; $cfg | Set-Content -LiteralPath $tmp -Encoding ascii -NoNewline; claude --strict-mcp-config --mcp-config $tmp '{CLI_TRACE_CONTEXT_PROMPT}'"
+            "$cfg='{claude_json}'; $tmp = Join-Path $env:TEMP ('perfetto-desktop-' + [guid]::NewGuid().ToString('N') + '.json'); $cfg | Set-Content -LiteralPath $tmp -Encoding ascii -NoNewline; if (-not (Test-Path -LiteralPath $tmp)) {{ throw \"failed to write Perfetto Desktop MCP config to $tmp\" }}; claude --strict-mcp-config --mcp-config \"$tmp\" '{CLI_TRACE_CONTEXT_PROMPT}'"
         );
         let codex_args = format!(
             "codex -c 'mcp_servers.perfetto_desktop.url=\"{endpoint}\"' -c 'mcp_servers.perfetto_desktop.bearer_token_env_var=\"PERFETTO_DESKTOP_MCP_TOKEN\"' '{CLI_TRACE_CONTEXT_PROMPT}'"
@@ -1195,8 +1207,27 @@ mod tests {
     fn powershell_claude_command_writes_config_to_a_temp_file() {
         let session = SessionConfig::new(38471);
         assert!(
-            session.claude_command_ps.contains("New-TemporaryFile"),
-            "PowerShell Claude command must create temp files with CLM-safe cmdlets: {}",
+            !session.claude_command_ps.contains("New-TemporaryFile"),
+            "PowerShell Claude command must not use New-TemporaryFile: a \
+             silent failure leaves $tmp empty, and PS 5.1 drops empty values \
+             from native command argv, mis-binding the prompt to \
+             --mcp-config. Build the path explicitly from $env:TEMP + GUID \
+             instead. Command was: {}",
+            session.claude_command_ps,
+        );
+        assert!(
+            session.claude_command_ps.contains("Join-Path $env:TEMP"),
+            "PowerShell Claude command must derive the temp path from \
+             $env:TEMP via Join-Path so it cannot evaluate to null: {}",
+            session.claude_command_ps,
+        );
+        assert!(
+            session
+                .claude_command_ps
+                .contains("[guid]::NewGuid().ToString('N')"),
+            "PowerShell Claude command must use [guid]::NewGuid() for a \
+             collision-free filename (CLM-safe; Get-Random would reduce \
+             entropy and risk collisions across concurrent sessions): {}",
             session.claude_command_ps,
         );
         assert!(
@@ -1205,14 +1236,34 @@ mod tests {
             session.claude_command_ps,
         );
         assert!(
-            !session.claude_command_ps.contains("[IO.Path]::GetTempFileName"),
-            "PowerShell Claude command must not call .NET methods blocked by Constrained Language Mode: {}",
+            session
+                .claude_command_ps
+                .contains("Test-Path -LiteralPath $tmp"),
+            "PowerShell Claude command must verify the temp file landed \
+             before invoking claude, so a Set-Content failure surfaces \
+             loudly here instead of being mis-attributed to claude's argv \
+             parser: {}",
             session.claude_command_ps,
         );
         assert!(
-            session.claude_command_ps.contains("--mcp-config $tmp"),
-            "PowerShell Claude command must pass the temp-file path, \
-             not inline JSON: {}",
+            session.claude_command_ps.contains("throw "),
+            "PowerShell Claude command must throw on Test-Path failure to \
+             abort before invoking claude with a missing config: {}",
+            session.claude_command_ps,
+        );
+        assert!(
+            !session.claude_command_ps.contains("[IO.Path]::GetTempFileName"),
+            "PowerShell Claude command must not call .NET methods blocked \
+             by Constrained Language Mode: {}",
+            session.claude_command_ps,
+        );
+        assert!(
+            session.claude_command_ps.contains("--mcp-config \"$tmp\""),
+            "PowerShell Claude command must double-quote $tmp when passing \
+             it to claude. PS 5.1's native-arg binder drops a bare empty \
+             $tmp from argv, which would let the prompt slide into \
+             --mcp-config's slot; quoting forces a literal \"\" token \
+             instead, so any failure surfaces as a real path error: {}",
             session.claude_command_ps,
         );
         // Sanity-anchor the bash variant: it intentionally inlines the JSON
