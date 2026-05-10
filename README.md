@@ -29,46 +29,28 @@ Upstream code is never modified in this repo's history; any patches
 that become necessary live as files under `patches/perfetto/` and are
 applied at setup time.
 
-## Layout
-
-| Path | Purpose |
-| --- | --- |
-| `desktop/` | Tauri project (the desktop shell) |
-| `ui-overlay/` | Fork-owned UI plugins overlaid into Perfetto's UI tree at setup time. |
-| `patches/perfetto/` | Git patches applied to the Perfetto checkout at setup time. |
-| `scripts/` | `setup.sh`, `apply-patches.sh`, `sync-overlay.sh`, `update-perfetto.sh` |
-| `third_party/perfetto/` | Gitignored. Populated by `setup.sh`. |
-| `docs/design-docs/` | Architecture and rollout docs |
-
-## Downloads
-
-Release builds are produced by the GitHub Actions release workflow:
-
-- macOS arm64: unsigned DMG.
-- Windows x64: unsigned NSIS `.exe` and MSI `.msi` installers.
-
-The app is not yet code-signed. macOS Gatekeeper and Windows SmartScreen may
-warn on first launch.
-
 ## Quick start
 
-```sh
-git clone https://github.com/tooluse-labs/perfetto-desktop
-cd perfetto-desktop
-./scripts/bootstrap.sh                          # host toolchain (pnpm + rustup), one-time per machine
-./scripts/setup.sh                              # fetch and pin upstream Perfetto + UI build deps
-(cd desktop && pnpm install && pnpm tauri dev)  # run the Tauri shell
-```
+1. Download an installer from the latest
+   [release](https://github.com/tooluse-labs/perfetto-desktop/releases/latest):
 
-`pnpm tauri dev` invokes the Perfetto UI dev server directly via
-`tauri.conf.json:beforeDevCommand`. It calls `ui/build.js` rather
-than `ui/run-dev-server` because the wrapper hardcodes
-`--only-wasm-memory64` and macOS WKWebView cannot load Memory64
-WASM. See `docs/design-docs/perfetto-desktop-architecture.md` §6.1.
+   - **macOS arm64** — unsigned DMG. Drag **Perfetto Desktop.app** into
+     **/Applications**. If Gatekeeper blocks the first launch:
+     ```sh
+     xattr -d com.apple.quarantine "/Applications/Perfetto Desktop.app"
+     ```
+   - **Windows x64** — unsigned NSIS `.exe` or MSI `.msi`. On first launch,
+     SmartScreen may prompt — choose **More info → Run anyway**.
 
-`scripts/bootstrap.sh` currently supports macOS only. CI builds the Windows
-installer on `windows-latest` (Perfetto UI is prebuilt on Linux and consumed
-by the Windows packaging job); local Windows bootstrap docs are still pending.
+2. Open the app and load a trace.
+
+3. In the sidebar's *current trace* section, click **CLI Agent**, pick your
+   shell (Bash / Zsh or PowerShell), and copy the **Codex** or **Claude Code**
+   command. Run it in a terminal, and the agent will be able to query and
+   drive the trace currently open in the GUI.
+
+For build-from-source instructions and the repository layout, see
+[Build from source](#build-from-source).
 
 ## CLI Agent
 
@@ -168,6 +150,37 @@ ranges.
 | Platform target | Desktop app releases: macOS arm64 and Windows x64 installers. | Prebuilt binaries for Linux, macOS, and Windows. |
 | Batch/CI suitability | Not ideal; requires the desktop app and loaded UI trace. | Good fit for scripts, repeatable CLI workflows, and CI-style analysis. |
 | Security boundary | Local loopback server with bearer auth, host/origin checks, and single-instance desktop ownership. | stdio process boundary; access follows whatever file paths the MCP client asks it to load. |
+
+## Build from source
+
+```sh
+git clone https://github.com/tooluse-labs/perfetto-desktop
+cd perfetto-desktop
+./scripts/bootstrap.sh                          # host toolchain (pnpm + rustup), one-time per machine
+./scripts/setup.sh                              # fetch and pin upstream Perfetto + UI build deps
+(cd desktop && pnpm install && pnpm tauri dev)  # run the Tauri shell
+```
+
+`pnpm tauri dev` invokes the Perfetto UI dev server directly via
+`tauri.conf.json:beforeDevCommand`. It calls `ui/build.js` rather than
+`ui/run-dev-server` because the wrapper hardcodes `--only-wasm-memory64`
+and macOS WKWebView cannot load Memory64 WASM. See
+`docs/design-docs/perfetto-desktop-architecture.md` §6.1.
+
+`scripts/bootstrap.sh` currently supports macOS only. CI builds the Windows
+installer on `windows-latest` (Perfetto UI is prebuilt on Linux and consumed
+by the Windows packaging job); local Windows bootstrap docs are still pending.
+
+### Repository layout
+
+| Path | Purpose |
+| --- | --- |
+| `desktop/` | Tauri project (the desktop shell) |
+| `ui-overlay/` | Fork-owned UI plugins overlaid into Perfetto's UI tree at setup time. |
+| `patches/perfetto/` | Git patches applied to the Perfetto checkout at setup time. |
+| `scripts/` | `setup.sh`, `apply-patches.sh`, `sync-overlay.sh`, `update-perfetto.sh` |
+| `third_party/perfetto/` | Gitignored. Populated by `setup.sh`. |
+| `docs/design-docs/` | Architecture and rollout docs |
 
 ## License
 

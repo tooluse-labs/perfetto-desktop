@@ -27,45 +27,28 @@
 拉取至 `third_party/perfetto/`。我们不会修改上游源码；如确需调整，则以
 补丁文件形式置于 `patches/perfetto/` 目录，在 setup 阶段统一应用。
 
-## 目录结构
-
-| 路径 | 用途 |
-| --- | --- |
-| `desktop/` | Tauri 项目（桌面壳） |
-| `ui-overlay/` | fork 自有的 UI 插件，setup 阶段覆盖到 Perfetto UI 源码树 |
-| `patches/perfetto/` | setup 阶段应用到 Perfetto checkout 的 git 补丁 |
-| `scripts/` | `setup.sh`、`apply-patches.sh`、`sync-overlay.sh`、`update-perfetto.sh` |
-| `third_party/perfetto/` | 已 gitignore，由 `setup.sh` 填充 |
-| `docs/design-docs/` | 架构与发布相关的设计文档 |
-
-## 下载
-
-Release 构建由 GitHub Actions release workflow 产出：
-
-- macOS arm64：未签名 DMG。
-- Windows x64：未签名 NSIS `.exe` 与 MSI `.msi` 安装包。
-
-应用尚未代码签名，因此首次启动时 macOS Gatekeeper 与 Windows SmartScreen
-可能会弹出警告。
-
 ## 快速开始
 
-```sh
-git clone https://github.com/tooluse-labs/perfetto-desktop
-cd perfetto-desktop
-./scripts/bootstrap.sh                          # 本机工具链 (pnpm + rustup)，每台机器仅需执行一次
-./scripts/setup.sh                              # 拉取 Perfetto 上游与 UI 构建依赖
-(cd desktop && pnpm install && pnpm tauri dev)  # 启动 Tauri 壳
-```
+1. 从最新一次
+   [release](https://github.com/tooluse-labs/perfetto-desktop/releases/latest)
+   下载安装包：
 
-`pnpm tauri dev` 通过 `tauri.conf.json:beforeDevCommand` 直接调用
-`ui/build.js`，而非 `ui/run-dev-server`——后者将 `--only-wasm-memory64`
-写死在内部，但 macOS 的 WKWebView 无法加载 Memory64 WASM。详见
-`docs/design-docs/perfetto-desktop-architecture.md` §6.1。
+   - **macOS arm64** —— 未签名 DMG。把 **Perfetto Desktop.app** 拖进
+     **/Applications**。如果首次启动被 Gatekeeper 拦下：
+     ```sh
+     xattr -d com.apple.quarantine "/Applications/Perfetto Desktop.app"
+     ```
+   - **Windows x64** —— 未签名 NSIS `.exe` 或 MSI `.msi`。首次启动
+     SmartScreen 可能弹窗，选 **更多信息 → 仍要运行**。
 
-`scripts/bootstrap.sh` 当前仅覆盖 macOS。Windows 安装包由 CI 在
-`windows-latest` 上构建（Perfetto UI 在 Linux 上预编译，再交由 Windows
-打包流程消费）；本地 Windows 的 bootstrap 文档暂未补齐。
+2. 打开应用，加载一个 trace。
+
+3. 在侧边栏 *current trace* 分组里点 **CLI Agent**，选好你的 shell
+   （Bash / Zsh 或 PowerShell），复制 **Codex** 或 **Claude Code** 那条
+   命令，粘到终端运行。Agent 启动后即可查询并驱动 GUI 中当前打开的 trace。
+
+如需自行构建源码或了解仓库结构，请见
+[从源码构建](#从源码构建)。
 
 ## CLI Agent
 
@@ -157,6 +140,36 @@ PerfettoSQL，或驱动 Perfetto UI（打开 SQL view、将 timeline 定位到�
 | 平台 | 桌面应用：macOS arm64、Windows x64。 | Linux、macOS、Windows 均提供预编译。 |
 | 批量 / CI 场景 | 不适合；需要桌面应用且 UI 已加载 trace。 | 适合脚本、可重复的 CLI 工作流与 CI 风格的批量分析。 |
 | 安全边界 | 本地 loopback server，结合 Bearer 鉴权、host/origin 校验与桌面单实例。 | stdio 进程边界；可访问范围由 MCP 客户端指定的加载路径决定。 |
+
+## 从源码构建
+
+```sh
+git clone https://github.com/tooluse-labs/perfetto-desktop
+cd perfetto-desktop
+./scripts/bootstrap.sh                          # 本机工具链 (pnpm + rustup)，每台机器仅需执行一次
+./scripts/setup.sh                              # 拉取 Perfetto 上游与 UI 构建依赖
+(cd desktop && pnpm install && pnpm tauri dev)  # 启动 Tauri 壳
+```
+
+`pnpm tauri dev` 通过 `tauri.conf.json:beforeDevCommand` 直接调用
+`ui/build.js`，而非 `ui/run-dev-server`——后者将 `--only-wasm-memory64`
+写死在内部，但 macOS 的 WKWebView 无法加载 Memory64 WASM。详见
+`docs/design-docs/perfetto-desktop-architecture.md` §6.1。
+
+`scripts/bootstrap.sh` 当前仅覆盖 macOS。Windows 安装包由 CI 在
+`windows-latest` 上构建（Perfetto UI 在 Linux 上预编译，再交由 Windows
+打包流程消费）；本地 Windows 的 bootstrap 文档暂未补齐。
+
+### 仓库结构
+
+| 路径 | 用途 |
+| --- | --- |
+| `desktop/` | Tauri 项目（桌面壳） |
+| `ui-overlay/` | fork 自有的 UI 插件，setup 阶段覆盖到 Perfetto UI 源码树 |
+| `patches/perfetto/` | setup 阶段应用到 Perfetto checkout 的 git 补丁 |
+| `scripts/` | `setup.sh`、`apply-patches.sh`、`sync-overlay.sh`、`update-perfetto.sh` |
+| `third_party/perfetto/` | 已 gitignore，由 `setup.sh` 填充 |
+| `docs/design-docs/` | 架构与发布相关的设计文档 |
 
 ## License
 
