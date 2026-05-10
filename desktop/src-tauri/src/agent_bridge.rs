@@ -1176,4 +1176,71 @@ mod tests {
         let future = timeout(Duration::from_millis(100), connection_receiver.changed()).await;
         assert!(future.is_ok(), "future revoke must close the connection");
     }
+
+    // The PowerShell connection commands have to dodge a quirky Windows
+    // behaviour: `claude.cmd` / `codex.cmd` (the npm-bin shims) hand argv off
+    // to cmd.exe, whose tokenizer strips embedded `"`. Earlier revisions of
+    // this code passed the JSON config inline as a CLI argument, which was
+    // mangled in production (claude received `{mcpServers:...}` and tried to
+    // resolve it as a relative file path). The tests below lock down the
+    // shape of the PowerShell variants so a future "simplification" can't
+    // accidentally fold them back into the sh form.
+    #[test]
+    fn powershell_claude_command_writes_config_to_a_temp_file() {
+        let session = SessionConfig::new(38471);
+        assert!(
+            session.claude_command_ps.contains("Out-File"),
+            "PowerShell Claude command must persist JSON via Out-File: {}",
+            session.claude_command_ps,
+        );
+        assert!(
+            session.claude_command_ps.contains("--mcp-config $tmp"),
+            "PowerShell Claude command must pass the temp-file path, \
+             not inline JSON: {}",
+            session.claude_command_ps,
+        );
+        // Sanity-anchor the bash variant: it intentionally inlines the JSON
+        // (single-quoted bash strings preserve embedded `"` losslessly).
+        assert!(
+            session.claude_command.contains("--mcp-config '{"),
+            "Bash Claude command should inline JSON: {}",
+            session.claude_command,
+        );
+    }
+
+    #[test]
+    fn powershell_codex_command_uses_outer_double_inner_single_quotes() {
+        let session = SessionConfig::new(38471);
+        assert!(
+            session
+                .codex_command_ps
+                .contains("-c \"mcp_servers.perfetto_desktop.url='"),
+            "PowerShell Codex `-c` args must wrap with outer double / \
+             inner single quotes so cmd.exe only strips the outer pair: {}",
+            session.codex_command_ps,
+        );
+        assert!(
+            session
+                .codex_command_ps
+                .starts_with("$env:PERFETTO_DESKTOP_MCP_TOKEN="),
+            "PowerShell Codex command must use the `$env:` env-var prefix: {}",
+            session.codex_command_ps,
+        );
+        assert!(
+            !session.codex_command_ps.starts_with("PERFETTO_DESKTOP_MCP_TOKEN="),
+            "PowerShell Codex command must not use the bare `VAR=val` \
+             prefix — PowerShell would treat the assignment as a command \
+             name: {}",
+            session.codex_command_ps,
+        );
+        // Sanity-anchor the bash variant: it intentionally uses the
+        // sh-only `VAR=val cmd` inline env-var prefix.
+        assert!(
+            session
+                .codex_command
+                .starts_with("PERFETTO_DESKTOP_MCP_TOKEN="),
+            "Bash Codex command should use the `VAR=val` env-var prefix: {}",
+            session.codex_command,
+        );
+    }
 }
