@@ -75,7 +75,6 @@ struct SessionConfig {
     allowed_hosts: [String; 2],
     claude_command: String,
     codex_command: String,
-    claude_command_ps: String,
     codex_command_ps: String,
     session_id: String,
 }
@@ -155,8 +154,6 @@ pub struct AgentBridgeSnapshot {
     claude_command: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     codex_command: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    claude_command_ps: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     codex_command_ps: Option<String>,
 }
@@ -517,7 +514,6 @@ fn snapshot_inner(inner: &BridgeInner) -> Result<AgentBridgeSnapshot, String> {
         last_method: inner.last_method.clone(),
         claude_command: session.map(|s| s.claude_command.clone()),
         codex_command: session.map(|s| s.codex_command.clone()),
-        claude_command_ps: session.map(|s| s.claude_command_ps.clone()),
         codex_command_ps: session.map(|s| s.codex_command_ps.clone()),
     })
 }
@@ -543,18 +539,17 @@ impl SessionConfig {
                 },
             },
         });
+        // Claude's command is shell-agnostic: PowerShell treats single-quoted
+        // strings as literals, just like bash. Only the Codex command needs a
+        // PowerShell variant because its `VAR=val cmd` inline env-var prefix is
+        // sh-only — PowerShell wants `$env:VAR=val;` and a separator.
         let claude_command = format!("claude --strict-mcp-config --mcp-config '{claude_json}'");
-        let codex_command = format!(
-            "PERFETTO_DESKTOP_MCP_TOKEN='{secret}' codex -c 'mcp_servers.perfetto_desktop.url=\"{endpoint}\"' -c 'mcp_servers.perfetto_desktop.bearer_token_env_var=\"PERFETTO_DESKTOP_MCP_TOKEN\"'"
+        let codex_args = format!(
+            "codex -c 'mcp_servers.perfetto_desktop.url=\"{endpoint}\"' -c 'mcp_servers.perfetto_desktop.bearer_token_env_var=\"PERFETTO_DESKTOP_MCP_TOKEN\"'"
         );
-        // PowerShell treats single-quoted strings as literals (same as bash),
-        // so the Claude command works as-is. Codex uses an inline `VAR=val cmd`
-        // env-var prefix that is sh-only — PowerShell needs `$env:VAR=val;`
-        // and a separator before the command.
-        let claude_command_ps = claude_command.clone();
-        let codex_command_ps = format!(
-            "$env:PERFETTO_DESKTOP_MCP_TOKEN='{secret}'; codex -c 'mcp_servers.perfetto_desktop.url=\"{endpoint}\"' -c 'mcp_servers.perfetto_desktop.bearer_token_env_var=\"PERFETTO_DESKTOP_MCP_TOKEN\"'"
-        );
+        let codex_command = format!("PERFETTO_DESKTOP_MCP_TOKEN='{secret}' {codex_args}");
+        let codex_command_ps =
+            format!("$env:PERFETTO_DESKTOP_MCP_TOKEN='{secret}'; {codex_args}");
         Self {
             port,
             endpoint,
@@ -562,7 +557,6 @@ impl SessionConfig {
             allowed_hosts,
             claude_command,
             codex_command,
-            claude_command_ps,
             codex_command_ps,
             session_id: Uuid::new_v4().to_string(),
         }

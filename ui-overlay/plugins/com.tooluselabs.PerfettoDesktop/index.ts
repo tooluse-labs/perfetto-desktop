@@ -15,6 +15,7 @@ import {Callout} from '../../widgets/callout';
 import {Intent} from '../../widgets/common';
 import {Icon} from '../../widgets/icon';
 import {Section} from '../../widgets/section';
+import {SegmentedButton, SegmentedButtons} from '../../widgets/segmented_buttons';
 import QueryPagePlugin from '../dev.perfetto.QueryPage';
 import {AgentBridgeToolServer} from './bridge_tools';
 import type {
@@ -53,7 +54,6 @@ interface AgentBridgeSnapshot {
   readonly lastMethod?: string;
   readonly claudeCommand?: string;
   readonly codexCommand?: string;
-  readonly claudeCommandPs?: string;
   readonly codexCommandPs?: string;
 }
 
@@ -124,7 +124,6 @@ function snapshotsEqual(
     a.lastMethod === b.lastMethod &&
     a.claudeCommand === b.claudeCommand &&
     a.codexCommand === b.codexCommand &&
-    a.claudeCommandPs === b.claudeCommandPs &&
     a.codexCommandPs === b.codexCommandPs
   );
 }
@@ -331,8 +330,8 @@ class AgentBridgePage implements m.ClassComponent<{readonly app: App}> {
         renderEmptyState('power_settings_new', 'Bridge stopped.'),
       );
     }
-    const claudeCmd = this.shell === 'powershell'
-      ? status?.claudeCommandPs : status?.claudeCommand;
+    // Claude's command is identical in both shells; only Codex differs.
+    const claudeCmd = status?.claudeCommand;
     const codexCmd = this.shell === 'powershell'
       ? status?.codexCommandPs : status?.codexCommand;
     return m(
@@ -359,24 +358,18 @@ class AgentBridgePage implements m.ClassComponent<{readonly app: App}> {
   private renderShellToggle(): m.Children {
     return m('div', {style: shellToggleStyle}, [
       m('span', {style: shellToggleLabelStyle}, 'Shell'),
-      m(ButtonBar, [
-        m(Button, {
-          label: 'Bash / Zsh',
-          icon: 'terminal',
-          intent: this.shell === 'bash' ? Intent.Primary : Intent.None,
-          variant: this.shell === 'bash'
-            ? ButtonVariant.Filled : ButtonVariant.Outlined,
-          onclick: () => this.selectShell('bash'),
-        }),
-        m(Button, {
-          label: 'PowerShell',
-          icon: 'terminal',
-          intent: this.shell === 'powershell' ? Intent.Primary : Intent.None,
-          variant: this.shell === 'powershell'
-            ? ButtonVariant.Filled : ButtonVariant.Outlined,
-          onclick: () => this.selectShell('powershell'),
-        }),
-      ]),
+      m(
+        SegmentedButtons,
+        {
+          selectedValue: this.shell,
+          intent: Intent.Primary,
+          onOptionSelected: (value) => this.selectShell(value as Shell),
+        },
+        [
+          m(SegmentedButton, {value: 'bash', icon: 'terminal'}, 'Bash / Zsh'),
+          m(SegmentedButton, {value: 'powershell', icon: 'terminal'}, 'PowerShell'),
+        ],
+      ),
     ]);
   }
 
