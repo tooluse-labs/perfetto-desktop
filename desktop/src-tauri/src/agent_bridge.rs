@@ -25,6 +25,9 @@ const DEFAULT_PORT: u16 = 38471;
 const MCP_PATH: &str = "/mcp";
 const TRACE_CONTEXT_RESOURCE_URI: &str = "perfetto://desktop/current-trace";
 const TRACE_CONTEXT_RESOURCE_NAME: &str = "Current Perfetto trace";
+// Keep this single-quote-free: the generated shell snippets wrap it in
+// single quotes for both sh and PowerShell.
+const CLI_TRACE_CONTEXT_PROMPT: &str = "Use the connected Perfetto Desktop MCP server as the primary context. First call perfetto-get-trace-info to inspect the currently loaded trace, then analyze that loaded trace. Do not search the local filesystem for trace files unless explicitly asked.";
 // 1 MiB cap on incoming MCP request bodies. JSON-RPC envelopes are far smaller;
 // query results stream out via response side, where Phase B SQL caps live.
 const MAX_BODY_BYTES: usize = 1024 * 1024;
@@ -551,22 +554,25 @@ impl SessionConfig {
         // embedded double quotes, but `claude.cmd` / `codex.cmd` (the npm-bin
         // shims) hand the argv off to cmd.exe, whose tokenizer strips embedded
         // `"`. The mitigations below avoid putting `"` in the args:
-        //   - Claude: write the config JSON to a temp file (Out-File ASCII,
-        //     no BOM) and pass the path to --mcp-config. The flag accepts
-        //     either inline JSON or a file path.
+        //   - Claude: write the config JSON to a temp file (ASCII, no BOM)
+        //     and pass the path to --mcp-config. Use cmdlets only so the
+        //     command also works in Windows PowerShell Constrained Language
+        //     Mode, where `[IO.Path]::GetTempFileName()` is blocked.
         //   - Codex: flip the -c TOML pairs to outer double / inner single
         //     quotes. cmd.exe strips the outer double quotes; the inner
         //     single quotes pass through and TOML parses them as literal
         //     strings.
-        let claude_command = format!("claude --strict-mcp-config --mcp-config '{claude_json}'");
+        let claude_command = format!(
+            "claude --strict-mcp-config --mcp-config '{claude_json}' '{CLI_TRACE_CONTEXT_PROMPT}'"
+        );
         let claude_command_ps = format!(
-            "$cfg='{claude_json}'; $tmp=[IO.Path]::GetTempFileName(); $cfg | Out-File -FilePath $tmp -Encoding ascii -NoNewline; claude --strict-mcp-config --mcp-config $tmp"
+            "$cfg='{claude_json}'; $tmp=(New-TemporaryFile).FullName; $cfg | Set-Content -LiteralPath $tmp -Encoding ascii -NoNewline; claude --strict-mcp-config --mcp-config $tmp '{CLI_TRACE_CONTEXT_PROMPT}'"
         );
         let codex_args = format!(
-            "codex -c 'mcp_servers.perfetto_desktop.url=\"{endpoint}\"' -c 'mcp_servers.perfetto_desktop.bearer_token_env_var=\"PERFETTO_DESKTOP_MCP_TOKEN\"'"
+            "codex -c 'mcp_servers.perfetto_desktop.url=\"{endpoint}\"' -c 'mcp_servers.perfetto_desktop.bearer_token_env_var=\"PERFETTO_DESKTOP_MCP_TOKEN\"' '{CLI_TRACE_CONTEXT_PROMPT}'"
         );
         let codex_args_ps = format!(
-            "codex -c \"mcp_servers.perfetto_desktop.url='{endpoint}'\" -c \"mcp_servers.perfetto_desktop.bearer_token_env_var='PERFETTO_DESKTOP_MCP_TOKEN'\""
+            "codex -c \"mcp_servers.perfetto_desktop.url='{endpoint}'\" -c \"mcp_servers.perfetto_desktop.bearer_token_env_var='PERFETTO_DESKTOP_MCP_TOKEN'\" '{CLI_TRACE_CONTEXT_PROMPT}'"
         );
         let codex_command = format!("PERFETTO_DESKTOP_MCP_TOKEN='{secret}' {codex_args}");
         let codex_command_ps =
@@ -1189,8 +1195,18 @@ mod tests {
     fn powershell_claude_command_writes_config_to_a_temp_file() {
         let session = SessionConfig::new(38471);
         assert!(
-            session.claude_command_ps.contains("Out-File"),
-            "PowerShell Claude command must persist JSON via Out-File: {}",
+            session.claude_command_ps.contains("New-TemporaryFile"),
+            "PowerShell Claude command must create temp files with CLM-safe cmdlets: {}",
+            session.claude_command_ps,
+        );
+        assert!(
+            session.claude_command_ps.contains("Set-Content"),
+            "PowerShell Claude command must persist JSON via Set-Content: {}",
+            session.claude_command_ps,
+        );
+        assert!(
+            !session.claude_command_ps.contains("[IO.Path]::GetTempFileName"),
+            "PowerShell Claude command must not call .NET methods blocked by Constrained Language Mode: {}",
             session.claude_command_ps,
         );
         assert!(
@@ -1227,7 +1243,9 @@ mod tests {
             session.codex_command_ps,
         );
         assert!(
-            !session.codex_command_ps.starts_with("PERFETTO_DESKTOP_MCP_TOKEN="),
+            !session
+                .codex_command_ps
+                .starts_with("PERFETTO_DESKTOP_MCP_TOKEN="),
             "PowerShell Codex command must not use the bare `VAR=val` \
              prefix — PowerShell would treat the assignment as a command \
              name: {}",
@@ -1242,5 +1260,30 @@ mod tests {
             "Bash Codex command should use the `VAR=val` env-var prefix: {}",
             session.codex_command,
         );
+    }
+
+    #[test]
+    fn cli_commands_start_with_loaded_trace_context() {
+        let session = SessionConfig::new(38471);
+        assert!(
+            !CLI_TRACE_CONTEXT_PROMPT.contains('\''),
+            "prompt must remain single-quote-free for shell embedding"
+        );
+
+        for (name, command) in [
+            ("claude sh", &session.claude_command),
+            ("claude powershell", &session.claude_command_ps),
+            ("codex sh", &session.codex_command),
+            ("codex powershell", &session.codex_command_ps),
+        ] {
+            assert!(
+                command.contains(&format!("'{CLI_TRACE_CONTEXT_PROMPT}'")),
+                "{name} command must pass the trace-context prompt: {command}",
+            );
+            assert!(
+                command.contains("perfetto-get-trace-info"),
+                "{name} command must instruct the agent to inspect the loaded trace first: {command}",
+            );
+        }
     }
 }
