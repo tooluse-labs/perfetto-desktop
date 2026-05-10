@@ -54,6 +54,7 @@ interface AgentBridgeSnapshot {
   readonly lastMethod?: string;
   readonly claudeCommand?: string;
   readonly codexCommand?: string;
+  readonly claudeCommandPs?: string;
   readonly codexCommandPs?: string;
 }
 
@@ -124,6 +125,7 @@ function snapshotsEqual(
     a.lastMethod === b.lastMethod &&
     a.claudeCommand === b.claudeCommand &&
     a.codexCommand === b.codexCommand &&
+    a.claudeCommandPs === b.claudeCommandPs &&
     a.codexCommandPs === b.codexCommandPs
   );
 }
@@ -330,10 +332,9 @@ class AgentBridgePage implements m.ClassComponent<{readonly app: App}> {
         renderEmptyState('power_settings_new', 'Bridge stopped.'),
       );
     }
-    // Claude's command is identical in both shells; only Codex differs.
-    const claudeCmd = status?.claudeCommand;
-    const codexCmd = this.shell === 'powershell'
-      ? status?.codexCommandPs : status?.codexCommand;
+    const isPs = this.shell === 'powershell';
+    const claudeCmd = isPs ? status?.claudeCommandPs : status?.claudeCommand;
+    const codexCmd = isPs ? status?.codexCommandPs : status?.codexCommand;
     return m(
       Section,
       {title: renderSectionTitle('Connection Commands')},

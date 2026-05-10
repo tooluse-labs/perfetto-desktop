@@ -75,6 +75,7 @@ struct SessionConfig {
     allowed_hosts: [String; 2],
     claude_command: String,
     codex_command: String,
+    claude_command_ps: String,
     codex_command_ps: String,
     session_id: String,
 }
@@ -154,6 +155,8 @@ pub struct AgentBridgeSnapshot {
     claude_command: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     codex_command: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    claude_command_ps: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     codex_command_ps: Option<String>,
 }
@@ -514,6 +517,7 @@ fn snapshot_inner(inner: &BridgeInner) -> Result<AgentBridgeSnapshot, String> {
         last_method: inner.last_method.clone(),
         claude_command: session.map(|s| s.claude_command.clone()),
         codex_command: session.map(|s| s.codex_command.clone()),
+        claude_command_ps: session.map(|s| s.claude_command_ps.clone()),
         codex_command_ps: session.map(|s| s.codex_command_ps.clone()),
     })
 }
@@ -539,17 +543,34 @@ impl SessionConfig {
                 },
             },
         });
-        // Claude's command is shell-agnostic: PowerShell treats single-quoted
-        // strings as literals, just like bash. Only the Codex command needs a
-        // PowerShell variant because its `VAR=val cmd` inline env-var prefix is
-        // sh-only — PowerShell wants `$env:VAR=val;` and a separator.
+        // Bash/zsh forms keep the JSON / TOML pairs in single quotes — the
+        // shell preserves embedded double quotes verbatim and the CLI sees the
+        // intended argument.
+        //
+        // PowerShell on Windows is more delicate. PowerShell itself preserves
+        // embedded double quotes, but `claude.cmd` / `codex.cmd` (the npm-bin
+        // shims) hand the argv off to cmd.exe, whose tokenizer strips embedded
+        // `"`. The mitigations below avoid putting `"` in the args:
+        //   - Claude: write the config JSON to a temp file (Out-File ASCII,
+        //     no BOM) and pass the path to --mcp-config. The flag accepts
+        //     either inline JSON or a file path.
+        //   - Codex: flip the -c TOML pairs to outer double / inner single
+        //     quotes. cmd.exe strips the outer double quotes; the inner
+        //     single quotes pass through and TOML parses them as literal
+        //     strings.
         let claude_command = format!("claude --strict-mcp-config --mcp-config '{claude_json}'");
+        let claude_command_ps = format!(
+            "$cfg='{claude_json}'; $tmp=[IO.Path]::GetTempFileName(); $cfg | Out-File -FilePath $tmp -Encoding ascii -NoNewline; claude --strict-mcp-config --mcp-config $tmp"
+        );
         let codex_args = format!(
             "codex -c 'mcp_servers.perfetto_desktop.url=\"{endpoint}\"' -c 'mcp_servers.perfetto_desktop.bearer_token_env_var=\"PERFETTO_DESKTOP_MCP_TOKEN\"'"
         );
+        let codex_args_ps = format!(
+            "codex -c \"mcp_servers.perfetto_desktop.url='{endpoint}'\" -c \"mcp_servers.perfetto_desktop.bearer_token_env_var='PERFETTO_DESKTOP_MCP_TOKEN'\""
+        );
         let codex_command = format!("PERFETTO_DESKTOP_MCP_TOKEN='{secret}' {codex_args}");
         let codex_command_ps =
-            format!("$env:PERFETTO_DESKTOP_MCP_TOKEN='{secret}'; {codex_args}");
+            format!("$env:PERFETTO_DESKTOP_MCP_TOKEN='{secret}'; {codex_args_ps}");
         Self {
             port,
             endpoint,
@@ -557,6 +578,7 @@ impl SessionConfig {
             allowed_hosts,
             claude_command,
             codex_command,
+            claude_command_ps,
             codex_command_ps,
             session_id: Uuid::new_v4().to_string(),
         }
