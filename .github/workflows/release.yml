@@ -190,7 +190,13 @@ jobs:
       - name: pnpm tauri build
         working-directory: desktop
         shell: bash
-        run: pnpm tauri build --bundles nsis,msi -c '{"build":{"beforeBuildCommand":null}}'
+        run: |
+          set -o pipefail
+          pnpm tauri build --verbose --bundles nsis,msi -c '{"build":{"beforeBuildCommand":null}}' 2>&1 | tee ../tauri-windows-build.log
+          if ! grep -q 'tauri/custom-protocol' ../tauri-windows-build.log; then
+            echo "::error::Windows Tauri build did not enable tauri/custom-protocol; the app can fall through to the local IIS splash page."
+            exit 1
+          fi
 
       - name: List build artifacts
         shell: bash
