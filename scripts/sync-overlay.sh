@@ -3,8 +3,10 @@
 # third_party/perfetto/ui/src/plugins/<name>/, one plugin at a time, so
 # upstream's other plugins are untouched.
 #
-# Uses rsync --delete inside each plugin dir so removed overlay files
-# are reflected in the destination.
+# We replace the destination plugin dir wholesale (rm -rf + cp -R) so
+# files removed from the overlay disappear from the destination too.
+# Avoiding rsync keeps this portable to Windows runners (git-bash) where
+# rsync is not available.
 set -euo pipefail
 shopt -s nullglob
 
@@ -28,7 +30,12 @@ fi
 
 for overlay in "${OVERLAYS[@]}"; do
   name=$(basename "$overlay")
+  dest="$PERFETTO_PLUGINS_DIR/$name"
   echo "==> Syncing overlay plugin: $name"
-  mkdir -p "$PERFETTO_PLUGINS_DIR/$name"
-  rsync -a --delete "$overlay" "$PERFETTO_PLUGINS_DIR/$name/"
+  rm -rf "$dest"
+  mkdir -p "$dest"
+  # The trailing /. on the source path is a portable trick that copies
+  # the directory's contents (including dotfiles) into the destination,
+  # equivalent to `rsync -a --delete src/ dest/`.
+  cp -R "${overlay%/}/." "$dest/"
 done
