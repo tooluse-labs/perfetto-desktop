@@ -30,9 +30,12 @@ source DEPS
 PERFETTO_DIR=third_party/perfetto
 
 if [[ ! -d $PERFETTO_DIR/.git ]]; then
-  echo "==> Cloning $PERFETTO_REPO into $PERFETTO_DIR"
+  echo "==> Cloning $PERFETTO_REPO into $PERFETTO_DIR (partial, blobless)"
   rm -rf "$PERFETTO_DIR"
-  git clone "$PERFETTO_REPO" "$PERFETTO_DIR"
+  # Partial clone: skip blob download, lazily fetch on demand. Cuts the
+  # cold-cache clone of google/perfetto from minutes to ~30s while still
+  # giving apply-patches.sh and reset --hard a real git repo to work on.
+  git clone --filter=blob:none "$PERFETTO_REPO" "$PERFETTO_DIR"
 fi
 
 # Only fetch and reset when the checkout is off the pinned SHA. The
@@ -56,7 +59,11 @@ fi
 
 if [[ $UI_DEPS -eq 1 ]]; then
   echo "==> Fetching Perfetto UI build deps (hermetic node, pnpm cache, buildtools)"
-  (cd "$PERFETTO_DIR" && ./tools/install-build-deps --ui)
+  # PERFETTO_SKIP_TEST_DATA=1 short-circuits Perfetto's unconditional
+  # //test/data sync (~398 binary trace fixtures used by upstream's diff
+  # tests, hundreds of MB). The desktop wrapper only builds the UI, so
+  # those fixtures are dead weight. Patch 0006 wires the env var.
+  (cd "$PERFETTO_DIR" && PERFETTO_SKIP_TEST_DATA=1 ./tools/install-build-deps --ui)
 else
   echo "==> Skipping UI build deps (--no-ui-deps)"
 fi

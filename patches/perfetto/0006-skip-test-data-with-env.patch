@@ -1,0 +1,18 @@
+diff --git a/tools/install-build-deps b/tools/install-build-deps
+index 0c85c0d3af..f1f8ff0a92 100755
+--- a/tools/install-build-deps
++++ b/tools/install-build-deps
+@@ -1106,6 +1106,9 @@ def Main():
+   cur_python_interpreter = sys.executable
+-  test_data_synced = 0 == subprocess.call([
+-      cur_python_interpreter, TEST_DATA_SCRIPT, 'status', '--quiet',
+-      '--ignore-new'
+-  ])
++  if os.environ.get('PERFETTO_SKIP_TEST_DATA') == '1':
++    test_data_synced = True
++  else:
++    test_data_synced = 0 == subprocess.call([
++        cur_python_interpreter, TEST_DATA_SCRIPT, 'status', '--quiet',
++        '--ignore-new'
++    ])
+   if args.check_only:
