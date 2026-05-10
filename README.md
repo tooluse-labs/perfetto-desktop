@@ -5,9 +5,11 @@
   </picture>
 </p>
 
-[![CI](https://github.com/tooluse-labs/perfetto-desktop/actions/workflows/ci.yml/badge.svg)](https://github.com/tooluse-labs/perfetto-desktop/actions/workflows/ci.yml)
-[![Release](https://img.shields.io/github/v/release/tooluse-labs/perfetto-desktop)](https://github.com/tooluse-labs/perfetto-desktop/releases)
-[![License](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE)
+<p align="center">
+  <a href="https://github.com/tooluse-labs/perfetto-desktop/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/tooluse-labs/perfetto-desktop/actions/workflows/ci.yml/badge.svg"></a>
+  <a href="https://github.com/tooluse-labs/perfetto-desktop/releases"><img alt="Release" src="https://img.shields.io/github/v/release/tooluse-labs/perfetto-desktop"></a>
+  <a href="LICENSE"><img alt="License" src="https://img.shields.io/badge/license-Apache--2.0-blue"></a>
+</p>
 
 <p align="center">
   English | <a href="README.zh-CN.md">简体中文</a>
