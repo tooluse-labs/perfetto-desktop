@@ -53,6 +53,17 @@ interface AgentBridgeSnapshot {
   readonly lastMethod?: string;
   readonly claudeCommand?: string;
   readonly codexCommand?: string;
+  readonly claudeCommandPs?: string;
+  readonly codexCommandPs?: string;
+}
+
+type Shell = 'bash' | 'powershell';
+
+function detectDefaultShell(): Shell {
+  if (typeof navigator !== 'undefined' && navigator.userAgent.includes('Windows')) {
+    return 'powershell';
+  }
+  return 'bash';
 }
 
 interface AgentBridgeTraceContext {
@@ -112,7 +123,9 @@ function snapshotsEqual(
     a.lastError === b.lastError &&
     a.lastMethod === b.lastMethod &&
     a.claudeCommand === b.claudeCommand &&
-    a.codexCommand === b.codexCommand
+    a.codexCommand === b.codexCommand &&
+    a.claudeCommandPs === b.claudeCommandPs &&
+    a.codexCommandPs === b.codexCommandPs
   );
 }
 
@@ -121,6 +134,7 @@ class AgentBridgePage implements m.ClassComponent<{readonly app: App}> {
   private error?: string;
   private copied?: string;
   private refreshTimer?: number;
+  private shell: Shell = detectDefaultShell();
   // Monotonic sequence so a slow `refresh` cannot overwrite a newer snapshot
   // produced by a button click in `runCommand`.
   private inflight = 0;
@@ -317,9 +331,14 @@ class AgentBridgePage implements m.ClassComponent<{readonly app: App}> {
         renderEmptyState('power_settings_new', 'Bridge stopped.'),
       );
     }
+    const claudeCmd = this.shell === 'powershell'
+      ? status?.claudeCommandPs : status?.claudeCommand;
+    const codexCmd = this.shell === 'powershell'
+      ? status?.codexCommandPs : status?.codexCommand;
     return m(
       Section,
       {title: renderSectionTitle('Connection Commands')},
+      this.renderShellToggle(),
       this.copied !== undefined &&
         m(
           Callout,
@@ -332,9 +351,39 @@ class AgentBridgePage implements m.ClassComponent<{readonly app: App}> {
           {icon: 'timeline', intent: Intent.Warning},
           'Load a trace before copying a CLI command so the agent starts with trace context.',
         ),
-      this.renderCommandBlock('Claude Code', status?.claudeCommand, !hasTrace),
-      this.renderCommandBlock('Codex', status?.codexCommand, !hasTrace),
+      this.renderCommandBlock('Claude Code', claudeCmd, !hasTrace),
+      this.renderCommandBlock('Codex', codexCmd, !hasTrace),
     );
+  }
+
+  private renderShellToggle(): m.Children {
+    return m('div', {style: shellToggleStyle}, [
+      m('span', {style: shellToggleLabelStyle}, 'Shell'),
+      m(ButtonBar, [
+        m(Button, {
+          label: 'Bash / Zsh',
+          icon: 'terminal',
+          intent: this.shell === 'bash' ? Intent.Primary : Intent.None,
+          variant: this.shell === 'bash'
+            ? ButtonVariant.Filled : ButtonVariant.Outlined,
+          onclick: () => this.selectShell('bash'),
+        }),
+        m(Button, {
+          label: 'PowerShell',
+          icon: 'terminal',
+          intent: this.shell === 'powershell' ? Intent.Primary : Intent.None,
+          variant: this.shell === 'powershell'
+            ? ButtonVariant.Filled : ButtonVariant.Outlined,
+          onclick: () => this.selectShell('powershell'),
+        }),
+      ]),
+    ]);
+  }
+
+  private selectShell(shell: Shell): void {
+    if (this.shell === shell) return;
+    this.shell = shell;
+    this.copied = undefined;
   }
 
   private renderCommandBlock(
@@ -628,6 +677,22 @@ const panelIconStyle = {
   borderRadius: '6px',
   border: '1px solid var(--pf-color-border)',
   background: 'var(--pf-color-background)',
+};
+
+const shellToggleStyle = {
+  display: 'flex',
+  alignItems: 'center',
+  gap: '12px',
+  marginBottom: '12px',
+  flexWrap: 'wrap',
+};
+
+const shellToggleLabelStyle = {
+  color: 'var(--pf-color-text-muted)',
+  fontSize: '12px',
+  fontWeight: '600',
+  textTransform: 'uppercase',
+  letterSpacing: '0.04em',
 };
 
 const codeStyle = {
