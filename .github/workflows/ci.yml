@@ -168,6 +168,20 @@ jobs:
         with:
           workspaces: desktop/src-tauri
 
+      - name: Provide frontendDist placeholder for cargo check
+        run: |
+          mkdir -p third_party/perfetto/ui/out/dist
+          cat > third_party/perfetto/ui/out/dist/index.html <<'HTML'
+          <!doctype html>
+          <html lang="en">
+          <head>
+            <meta charset="utf-8">
+            <title>Perfetto Desktop cargo-check placeholder</title>
+          </head>
+          <body></body>
+          </html>
+          HTML
+
       - name: cargo check
         working-directory: desktop/src-tauri
         run: cargo check --locked
