@@ -22,6 +22,13 @@ It packages the upstream Perfetto UI as a native desktop app and adds
 **CLI Agent**, a local MCP bridge that lets Codex, Claude Code, and other
 agentic MCP clients work against the trace currently open in the GUI.
 
+> **Don't need the GUI?** Use the headless companion
+> [`tooluse-labs/perfetto-mcp-rs`](https://github.com/tooluse-labs/perfetto-mcp-rs):
+> a standalone Rust MCP server that loads trace files directly from your CLI
+> or editor, with no desktop app to launch. See
+> [Perfetto Desktop vs perfetto-mcp-rs](#perfetto-desktop-vs-perfetto-mcp-rs)
+> for a side-by-side.
+
 This repository is product-only. Upstream Perfetto source is treated as
 a build dependency: pinned by SHA in [`DEPS`](DEPS) and fetched into
 `third_party/perfetto/` by [`scripts/setup.sh`](scripts/setup.sh).

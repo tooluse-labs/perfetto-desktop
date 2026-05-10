@@ -22,6 +22,12 @@
 一个本地 MCP bridge，使 Codex、Claude Code 等 MCP agent 能够直接基于 GUI
 当前打开的 trace 进行分析。
 
+> **不需要 GUI？** 推荐使用对应的无头版项目
+> [`tooluse-labs/perfetto-mcp-rs`](https://github.com/tooluse-labs/perfetto-mcp-rs)：
+> 一个独立的 Rust MCP server，可在 CLI 或编辑器中直接加载 trace 文件，
+> 无需启动桌面应用。详细对比见
+> [Perfetto Desktop vs perfetto-mcp-rs](#perfetto-desktop-vs-perfetto-mcp-rs)。
+
 本仓库仅托管产品代码。Perfetto 上游作为构建依赖处理：版本由
 [`DEPS`](DEPS) 中的 SHA 锁定，由 [`scripts/setup.sh`](scripts/setup.sh)
 拉取至 `third_party/perfetto/`。我们不会修改上游源码；如确需调整，则以
